@@ -1,7 +1,27 @@
 import OpenAI from 'openai';
+import { readFileSync, existsSync } from 'fs';
+import { join } from 'path';
+import { homedir } from 'os';
+
+// Try to load Codex auth token as fallback
+function getCodexToken() {
+  try {
+    const authPath = join(homedir(), '.codex', 'auth.json');
+    if (existsSync(authPath)) {
+      const auth = JSON.parse(readFileSync(authPath, 'utf-8'));
+      if (auth.access_token) {
+        console.log('🔑 Found Codex auth token');
+        return auth.access_token;
+      }
+    }
+  } catch (e) {}
+  return null;
+}
 
 // Supports Venice AI, OpenAI, or any OpenAI-compatible provider
 const provider = process.env.LLM_PROVIDER || 'openai';
+
+const openaiKey = process.env.OPENAI_API_KEY || getCodexToken() || 'dummy-key-replace-me';
 
 const config = {
   venice: {
@@ -10,7 +30,7 @@ const config = {
     model: 'venice-uncensored',
   },
   openai: {
-    apiKey: process.env.OPENAI_API_KEY || 'dummy-key-replace-me',
+    apiKey: openaiKey,
     baseURL: 'https://api.openai.com/v1',
     model: 'gpt-4o-mini',
   },
