@@ -1,12 +1,22 @@
 {
   "name": "ghost-cart",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "type": "module",
+  "description": "Privacy-first AI purchasing agent. Shop the internet invisibly.",
+  "main": "src/index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "dev": "node --watch src/index.js",
+    "start": "node src/index.js",
+    "test": "echo \"No tests yet\" && exit 0"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC"
+  "keywords": ["ai-agent", "shopping", "privacy", "erc-8004", "venice-ai", "x402"],
+  "author": "Brain&Bots (mcclowin)",
+  "license": "MIT",
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "helmet": "^8.0.0",
+    "openai": "^4.86.2"
+  }
 }
