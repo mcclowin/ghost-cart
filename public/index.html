@@ -198,6 +198,14 @@
   <script>
     let currentData = null;
 
+    function formatPrice(price) {
+      if (!price) return '—';
+      if (typeof price === 'string') return price;
+      if (typeof price === 'object') return price.display || `£${price.amount}` || '—';
+      if (typeof price === 'number') return `£${price.toFixed(2)}`;
+      return '—';
+    }
+
     // Wire up events
     document.getElementById('searchBtn').addEventListener('click', doSearch);
     document.getElementById('searchInput').addEventListener('keydown', e => {
@@ -305,7 +313,7 @@
               <button class="btn-buy" data-index="${i}">GhostCart buy 🛒</button>
             </div>
           </div>
-          <div class="result-price">${item.price || '—'}</div>
+          <div class="result-price">${formatPrice(item.price)}</div>
         `;
 
         // Wire up buy button

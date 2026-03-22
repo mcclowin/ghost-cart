@@ -16,19 +16,22 @@ function getCodexToken() {
 }
 
 // Resolve provider and API key
-const provider = process.env.LLM_PROVIDER || 'openai';
+const provider = (process.env.LLM_PROVIDER || 'openai').trim();
 
 let apiKey, baseURL, model;
 
 if (provider === 'venice') {
-  apiKey = process.env.VENICE_API_KEY;
+  apiKey = process.env.VENICE_API_KEY?.trim();
   baseURL = 'https://api.venice.ai/api/v1';
   model = 'venice-uncensored';
 } else {
-  apiKey = process.env.OPENAI_API_KEY || getCodexToken();
+  apiKey = process.env.OPENAI_API_KEY?.trim() || getCodexToken();
   baseURL = 'https://api.openai.com/v1';
   model = 'gpt-4o-mini';
 }
+
+// Debug: show what we found
+console.log(`🔍 ENV check: LLM_PROVIDER="${process.env.LLM_PROVIDER}", OPENAI_API_KEY=${process.env.OPENAI_API_KEY ? 'SET (' + process.env.OPENAI_API_KEY.length + ' chars)' : 'NOT SET'}, VENICE_API_KEY=${process.env.VENICE_API_KEY ? 'SET' : 'NOT SET'}`);
 
 const hasValidKey = !!apiKey;
 
