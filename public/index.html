@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GhostCart — Shop Privately</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { 
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #0a0a0a; color: #e0e0e0; min-height: 100vh;
+    }
+    .container { max-width: 800px; margin: 0 auto; padding: 20px; }
+    
+    /* Header */
+    .header { text-align: center; padding: 40px 0 30px; }
+    .header h1 { font-size: 2.5em; margin-bottom: 8px; }
+    .header h1 span.ghost { opacity: 0.7; }
+    .header p { color: #888; font-size: 1.1em; }
+    .privacy-badge {
+      display: inline-block; margin-top: 12px; padding: 6px 16px;
+      background: #1a1a2e; border: 1px solid #2a2a4a; border-radius: 20px;
+      font-size: 0.85em; color: #7b68ee;
+    }
+    .privacy-badge::before { content: '🔒 '; }
+
+    /* Search */
+    .search-box {
+      display: flex; gap: 10px; margin: 30px 0;
+    }
+    .search-box input {
+      flex: 1; padding: 14px 18px; border-radius: 12px;
+      border: 1px solid #333; background: #141414; color: #fff;
+      font-size: 1em; outline: none;
+    }
+    .search-box input:focus { border-color: #7b68ee; }
+    .search-box button {
+      padding: 14px 28px; border-radius: 12px; border: none;
+      background: #7b68ee; color: white; font-size: 1em;
+      cursor: pointer; font-weight: 600;
+    }
+    .search-box button:hover { background: #6a56d6; }
+    .search-box button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    /* Status */
+    .status {
+      text-align: center; padding: 20px; color: #888;
+      font-style: italic;
+    }
+    .status.searching { color: #7b68ee; }
+    .spinner { display: inline-block; animation: spin 1s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* Results */
+    .results { margin-top: 20px; }
+    .result-card {
+      background: #141414; border: 1px solid #222; border-radius: 12px;
+      padding: 16px; margin-bottom: 12px;
+      display: flex; gap: 16px; align-items: center;
+      transition: border-color 0.2s;
+    }
+    .result-card:hover { border-color: #7b68ee; }
+    .result-card.best { border-color: #4ade80; background: #0a1a0a; }
+    .result-rank {
+      font-size: 1.5em; font-weight: 700; color: #555;
+      min-width: 40px; text-align: center;
+    }
+    .result-card.best .result-rank { color: #4ade80; }
+    .result-img {
+      width: 80px; height: 80px; border-radius: 8px;
+      object-fit: cover; background: #222;
+    }
+    .result-info { flex: 1; }
+    .result-title { font-weight: 600; margin-bottom: 4px; }
+    .result-store { color: #888; font-size: 0.85em; }
+    .result-price { 
+      font-size: 1.3em; font-weight: 700; color: #4ade80;
+      text-align: right; min-width: 100px;
+    }
+    .result-actions { display: flex; gap: 8px; margin-top: 8px; }
+    .btn-buy {
+      padding: 8px 16px; border-radius: 8px; border: none;
+      background: #4ade80; color: #000; font-weight: 600;
+      cursor: pointer; font-size: 0.85em;
+    }
+    .btn-link {
+      padding: 8px 16px; border-radius: 8px; border: 1px solid #444;
+      background: transparent; color: #ccc; cursor: pointer;
+      font-size: 0.85em; text-decoration: none;
+    }
+    .btn-link:hover { border-color: #7b68ee; color: #7b68ee; }
+
+    /* Scores */
+    .scores { display: flex; gap: 8px; margin-top: 6px; }
+    .score-badge {
+      font-size: 0.75em; padding: 2px 8px; border-radius: 10px;
+      background: #1a1a2e; color: #7b68ee;
+    }
+    .score-badge.warn { background: #2e1a1a; color: #ee6868; }
+
+    /* Best pick */
+    .best-pick {
+      background: #0a1a0a; border: 1px solid #4ade80; border-radius: 12px;
+      padding: 16px; margin-top: 20px; text-align: center;
+    }
+    .best-pick h3 { color: #4ade80; margin-bottom: 8px; }
+
+    /* Privacy footer */
+    .privacy-footer {
+      text-align: center; padding: 30px 0; color: #555;
+      font-size: 0.85em; border-top: 1px solid #1a1a1a;
+      margin-top: 40px;
+    }
+
+    /* Payment modal */
+    .modal-overlay {
+      display: none; position: fixed; top: 0; left: 0;
+      width: 100%; height: 100%; background: rgba(0,0,0,0.8);
+      z-index: 1000; justify-content: center; align-items: center;
+    }
+    .modal-overlay.active { display: flex; }
+    .modal {
+      background: #1a1a1a; border: 1px solid #333; border-radius: 16px;
+      padding: 30px; max-width: 400px; width: 90%;
+    }
+    .modal h3 { margin-bottom: 16px; }
+    .payment-options { display: flex; flex-direction: column; gap: 10px; }
+    .payment-btn {
+      padding: 14px; border-radius: 10px; border: 1px solid #333;
+      background: #222; color: #fff; cursor: pointer;
+      font-size: 1em; text-align: center;
+    }
+    .payment-btn:hover { border-color: #7b68ee; }
+    .payment-btn.card { border-color: #635bff; }
+    .payment-btn.usdc { border-color: #2775ca; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>🛒<span class="ghost">👻</span> GhostCart</h1>
+      <p>Shop the internet. Privately.</p>
+      <div class="privacy-badge">Powered by Venice AI — zero data retention</div>
+    </div>
+
+    <div class="search-box">
+      <input type="text" id="searchInput" placeholder="What are you looking for? e.g. 'replacement Bosch dishwasher spray arm'" />
+      <button id="searchBtn" onclick="doSearch()">Search</button>
+    </div>
+
+    <div id="status" class="status"></div>
+    <div id="results" class="results"></div>
+    <div id="bestPick"></div>
+
+    <div class="privacy-footer">
+      🔒 Your search queries are processed by Venice AI with zero data retention.<br>
+      Stores see GhostCart's identity, not yours. <a href="/skill.md" style="color:#7b68ee;">Agent API</a> | <a href="/.well-known/agent-card.json" style="color:#7b68ee;">ERC-8004</a>
+    </div>
+  </div>
+
+  <!-- Payment Modal -->
+  <div class="modal-overlay" id="paymentModal">
+    <div class="modal">
+      <h3>How would you like to pay?</h3>
+      <div class="payment-options">
+        <button class="payment-btn card" onclick="payWithCard()">
+          💳 Pay with Card
+        </button>
+        <button class="payment-btn usdc" onclick="payWithUSDC()">
+          🔵 Pay with USDC (Base)
+        </button>
+        <button class="payment-btn" onclick="closeModal()">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let currentResults = null;
+
+    async function doSearch() {
+      const query = document.getElementById('searchInput').value.trim();
+      if (!query) return;
+
+      const btn = document.getElementById('searchBtn');
+      const status = document.getElementById('status');
+      const results = document.getElementById('results');
+      const bestPick = document.getElementById('bestPick');
+
+      btn.disabled = true;
+      btn.textContent = 'Searching...';
+      results.innerHTML = '';
+      bestPick.innerHTML = '';
+      status.className = 'status searching';
+      status.innerHTML = '<span class="spinner">🔍</span> Searching privately across eBay, Amazon, Selfridges, Zara, AliExpress...';
+
+      try {
+        const res = await fetch('/api/search', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ query }),
+        });
+
+        const data = await res.json();
+        currentResults = data;
+
+        if (data.results?.results?.length > 0) {
+          status.innerHTML = `Found ${data.results.results.length} results across multiple stores`;
+          status.className = 'status';
+          renderResults(data.results);
+        } else {
+          status.innerHTML = 'No results found. Try a different search.';
+          status.className = 'status';
+        }
+      } catch (err) {
+        status.innerHTML = '❌ Search failed: ' + err.message;
+        status.className = 'status';
+      }
+
+      btn.disabled = false;
+      btn.textContent = 'Search';
+    }
+
+    function renderResults(ranked) {
+      const container = document.getElementById('results');
+      
+      ranked.results.forEach((item, i) => {
+        const isBest = i === 0;
+        const card = document.createElement('div');
+        card.className = `result-card${isBest ? ' best' : ''}`;
+        
+        card.innerHTML = `
+          <div class="result-rank">#${item.rank || i + 1}</div>
+          ${item.image ? `<img class="result-img" src="${item.image}" alt="" />` : '<div class="result-img"></div>'}
+          <div class="result-info">
+            <div class="result-title">${item.title || 'Unknown'}</div>
+            <div class="result-store">${item.marketplace || 'Unknown store'}</div>
+            <div class="scores">
+              <span class="score-badge">Relevance: ${item.relevanceScore || '?'}</span>
+              <span class="score-badge">Value: ${item.valueScore || '?'}</span>
+              <span class="score-badge">Trust: ${item.trustScore || '?'}</span>
+              ${item.warnings?.length ? `<span class="score-badge warn">⚠️ ${item.warnings[0]}</span>` : ''}
+            </div>
+            <div class="result-actions">
+              ${item.url ? `<a class="btn-link" href="${item.url}" target="_blank">View on store →</a>` : ''}
+              <button class="btn-buy" onclick="buyItem(${i})">Buy for me 🛒</button>
+            </div>
+          </div>
+          <div class="result-price">${item.price || '—'}</div>
+        `;
+        container.appendChild(card);
+      });
+
+      if (ranked.bestPick) {
+        document.getElementById('bestPick').innerHTML = `
+          <div class="best-pick">
+            <h3>🏆 Best Pick</h3>
+            <p>${ranked.bestPick}</p>
+          </div>
+        `;
+      }
+    }
+
+    function buyItem(index) {
+      document.getElementById('paymentModal').classList.add('active');
+    }
+
+    function closeModal() {
+      document.getElementById('paymentModal').classList.remove('active');
+    }
+
+    function payWithCard() {
+      // TODO: Stripe Checkout redirect
+      alert('Stripe Checkout coming soon — will redirect to payment page');
+      closeModal();
+    }
+
+    function payWithUSDC() {
+      // TODO: Locus Checkout
+      alert('USDC payment coming soon — will use Locus on Base');
+      closeModal();
+    }
+
+    // Enter key triggers search
+    document.getElementById('searchInput').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') doSearch();
+    });
+  </script>
+</body>
+</html>

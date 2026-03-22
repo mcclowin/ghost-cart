@@ -1,16 +1,39 @@
 import OpenAI from 'openai';
 
-const venice = new OpenAI({
-  apiKey: process.env.VENICE_API_KEY,
-  baseURL: 'https://api.venice.ai/api/v1',
+// Supports Venice AI, OpenAI, or any OpenAI-compatible provider
+// Set LLM_PROVIDER=venice|openai in .env to switch
+const provider = process.env.LLM_PROVIDER || 'openai'; // default to openai for testing
+
+const config = {
+  venice: {
+    apiKey: process.env.VENICE_API_KEY,
+    baseURL: 'https://api.venice.ai/api/v1',
+    model: 'venice-uncensored',
+  },
+  openai: {
+    apiKey: process.env.OPENAI_API_KEY,
+    baseURL: 'https://api.openai.com/v1',
+    model: 'gpt-4o-mini', // cheap for testing
+  },
+};
+
+const activeConfig = config[provider];
+
+const llm = new OpenAI({
+  apiKey: activeConfig.apiKey,
+  baseURL: activeConfig.baseURL,
 });
+
+const MODEL = activeConfig.model;
+
+console.log(`🧠 LLM Provider: ${provider} (model: ${MODEL})`);
 
 /**
  * Parse a natural language shopping query into structured search terms
  */
 export async function parseQuery(userQuery) {
-  const response = await venice.chat.completions.create({
-    model: 'venice-uncensored',
+  const response = await llm.chat.completions.create({
+    model: MODEL,
     messages: [
       {
         role: 'system',
@@ -38,20 +61,32 @@ Return JSON only:
  * Rank and compare search results from multiple marketplaces
  */
 export async function rankResults(query, results) {
-  const response = await venice.chat.completions.create({
-    model: 'venice-uncensored',
+  const response = await llm.chat.completions.create({
+    model: MODEL,
     messages: [
       {
         role: 'system',
         content: `You are a shopping comparison expert. Given search results from multiple stores, rank them by best value.
-For each result, provide:
-- relevanceScore (0-100): how well it matches the query
-- valueScore (0-100): price vs quality assessment  
-- trustScore (0-100): seller reliability
-- warnings: any red flags (counterfeit risk, suspiciously cheap, bad seller)
-- recommendation: brief text
-
-Return JSON array sorted by overall score.`
+Return JSON:
+{
+  "results": [
+    {
+      "rank": 1,
+      "marketplace": "store name",
+      "title": "product title",
+      "price": "price string",
+      "url": "product url",
+      "relevanceScore": 0-100,
+      "valueScore": 0-100,
+      "trustScore": 0-100,
+      "overallScore": 0-100,
+      "warnings": ["any red flags"],
+      "recommendation": "brief text"
+    }
+  ],
+  "bestPick": "which one and why",
+  "privacyNote": "Your search was processed with zero data retention"
+}`
       },
       {
         role: 'user',
@@ -64,4 +99,4 @@ Return JSON array sorted by overall score.`
   return JSON.parse(response.choices[0].message.content);
 }
 
-export { venice };
+export { llm };
