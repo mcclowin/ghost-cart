@@ -1,18 +1,20 @@
+import dotenv from 'dotenv';
+dotenv.config(); // MUST be first — before any service imports read env vars
+
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
-import dotenv from 'dotenv';
 import { searchRouter } from './routes/search.js';
 import { buyRouter } from './routes/buy.js';
 import { webhookRouter } from './routes/webhook.js';
-
-dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 // Middleware
-app.use(helmet());
+app.use(helmet({
+  contentSecurityPolicy: false, // Disable CSP for dev — our frontend uses inline scripts
+}));
 app.use(cors());
 app.use(express.json());
 
