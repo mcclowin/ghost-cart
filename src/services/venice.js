@@ -18,9 +18,7 @@ function getCodexToken() {
   return null;
 }
 
-// Supports Venice AI, OpenAI, or any OpenAI-compatible provider
 const provider = process.env.LLM_PROVIDER || 'openai';
-
 const openaiKey = process.env.OPENAI_API_KEY || getCodexToken() || 'dummy-key-replace-me';
 
 const config = {
@@ -44,16 +42,14 @@ const llm = new OpenAI({
 });
 
 const MODEL = activeConfig.model;
-
 const hasValidKey = activeConfig.apiKey !== 'dummy-key-replace-me';
-console.log(`🧠 LLM Provider: ${provider} (model: ${MODEL}) ${hasValidKey ? '✅' : '⚠️ NO API KEY — LLM calls will fail'}`);
+console.log(`🧠 LLM Provider: ${provider} (model: ${MODEL}) ${hasValidKey ? '✅' : '⚠️ NO API KEY'}`);
 
 /**
  * Parse a natural language shopping query into structured search terms
  */
 export async function parseQuery(userQuery) {
   if (!hasValidKey) {
-    // Fallback: basic parsing without LLM
     return {
       searchTerms: [userQuery],
       productType: 'general',
@@ -70,16 +66,21 @@ export async function parseQuery(userQuery) {
     messages: [
       {
         role: 'system',
-        content: `You are a shopping assistant. Parse the user's request into structured search terms. 
+        content: `You are a shopping assistant. Parse the user's request into structured search terms optimised for product search engines.
+
+IMPORTANT: Generate search terms that will find SPECIFIC PRODUCTS for sale, not brand pages or category pages.
+
 Return JSON only:
 {
-  "searchTerms": ["primary search query", "alternative query"],
-  "productType": "category",
+  "searchTerms": ["most specific product search query", "alternative broader query"],
+  "productType": "category (e.g. jacket, spare part, electronics)",
   "brand": "brand or null",
   "model": "model number or null",
+  "color": "color or null",
+  "style": "style descriptors or null",
   "maxPrice": number or null,
-  "requirements": ["specific requirements"],
-  "marketplaces": ["best marketplaces to check"]
+  "requirements": ["specific requirements like size, material"],
+  "marketplaces": ["best marketplaces for this type of product"]
 }`
       },
       { role: 'user', content: userQuery }
@@ -91,13 +92,12 @@ Return JSON only:
 }
 
 /**
- * Rank and compare search results from multiple marketplaces
+ * Validate and rank search results - filter out irrelevant/non-product results
  */
 export async function rankResults(query, results) {
   if (!hasValidKey) {
-    // Fallback: return results as-is with basic scoring
     return {
-      results: results.map((r, i) => ({
+      results: results.slice(0, 10).map((r, i) => ({
         rank: i + 1,
         ...r,
         relevanceScore: 50,
@@ -105,10 +105,10 @@ export async function rankResults(query, results) {
         trustScore: 50,
         overallScore: 50,
         warnings: [],
-        recommendation: 'LLM not configured — showing raw results',
+        recommendation: 'Configure LLM for intelligent ranking',
       })),
-      bestPick: 'Configure an LLM API key for intelligent ranking',
-      privacyNote: 'Your search was processed locally (no LLM key configured)',
+      bestPick: 'Add an LLM API key for smart ranking',
+      privacyNote: 'Search processed locally',
     };
   }
 
@@ -117,31 +117,47 @@ export async function rankResults(query, results) {
     messages: [
       {
         role: 'system',
-        content: `You are a shopping comparison expert. Given search results from multiple stores, rank them by best value.
+        content: `You are a shopping comparison expert. Given search results from multiple stores, you must:
+
+1. FILTER OUT irrelevant results:
+   - Generic brand/category pages (not a specific product listing)
+   - Products that don't match what the user asked for
+   - Out of stock items
+   - Results with no price
+
+2. RANK remaining results by best value
+
+3. For each VALID result, provide scores and details
+
 Return JSON:
 {
   "results": [
     {
       "rank": 1,
       "marketplace": "store name",
-      "title": "product title",
-      "price": "price string",
-      "url": "product url",
-      "relevanceScore": 0-100,
-      "valueScore": 0-100,
-      "trustScore": 0-100,
+      "title": "exact product name",
+      "price": "£XX.XX",
+      "url": "direct product URL",
+      "image": "image URL if available",
+      "relevanceScore": 0-100 (how well it matches the query),
+      "valueScore": 0-100 (price vs quality),
+      "trustScore": 0-100 (seller/store reliability),
       "overallScore": 0-100,
+      "isActualProduct": true,
       "warnings": ["any red flags"],
       "recommendation": "brief text"
     }
   ],
-  "bestPick": "which one and why",
+  "filtered": ["list of results removed and why"],
+  "bestPick": "which one to buy and why in one sentence",
   "privacyNote": "Your search was processed with zero data retention"
-}`
+}
+
+ONLY include results where isActualProduct is true. Be strict — if it's a category page, brand page, or doesn't match the query, exclude it.`
       },
       {
         role: 'user',
-        content: `Query: "${query}"\n\nResults:\n${JSON.stringify(results, null, 2)}`
+        content: `User searched for: "${query}"\n\nRaw results from stores:\n${JSON.stringify(results, null, 2)}`
       }
     ],
     response_format: { type: 'json_object' },
