@@ -9,47 +9,53 @@ function getCodexToken() {
     const authPath = join(homedir(), '.codex', 'auth.json');
     if (existsSync(authPath)) {
       const auth = JSON.parse(readFileSync(authPath, 'utf-8'));
-      if (auth.access_token) {
-        console.log('🔑 Found Codex auth token');
-        return auth.access_token;
-      }
+      if (auth.access_token) return auth.access_token;
     }
   } catch (e) {}
   return null;
 }
 
+// Resolve provider and API key
 const provider = process.env.LLM_PROVIDER || 'openai';
-const openaiKey = process.env.OPENAI_API_KEY || getCodexToken() || 'dummy-key-replace-me';
 
-const config = {
-  venice: {
-    apiKey: process.env.VENICE_API_KEY || 'dummy-key-replace-me',
-    baseURL: 'https://api.venice.ai/api/v1',
-    model: 'venice-uncensored',
-  },
-  openai: {
-    apiKey: openaiKey,
-    baseURL: 'https://api.openai.com/v1',
-    model: 'gpt-4o-mini',
-  },
-};
+let apiKey, baseURL, model;
 
-const activeConfig = config[provider];
+if (provider === 'venice') {
+  apiKey = process.env.VENICE_API_KEY;
+  baseURL = 'https://api.venice.ai/api/v1';
+  model = 'venice-uncensored';
+} else {
+  apiKey = process.env.OPENAI_API_KEY || getCodexToken();
+  baseURL = 'https://api.openai.com/v1';
+  model = 'gpt-4o-mini';
+}
+
+const hasValidKey = !!apiKey;
+
+// Log clearly what we're using
+if (hasValidKey) {
+  const keyPreview = apiKey.substring(0, 8) + '...';
+  console.log(`🧠 LLM: ${provider} (${model}) ✅ Key: ${keyPreview}`);
+} else {
+  console.log(`🧠 LLM: ${provider} (${model}) ⚠️ NO API KEY — will use fallback parsing`);
+  if (provider === 'openai') {
+    console.log(`   💡 Set OPENAI_API_KEY in .env or put auth.json in ~/.codex/`);
+  } else {
+    console.log(`   💡 Set VENICE_API_KEY in .env`);
+  }
+}
 
 const llm = new OpenAI({
-  apiKey: activeConfig.apiKey,
-  baseURL: activeConfig.baseURL,
+  apiKey: apiKey || 'dummy-key-not-used',
+  baseURL,
 });
-
-const MODEL = activeConfig.model;
-const hasValidKey = activeConfig.apiKey !== 'dummy-key-replace-me';
-console.log(`🧠 LLM Provider: ${provider} (model: ${MODEL}) ${hasValidKey ? '✅' : '⚠️ NO API KEY'}`);
 
 /**
  * Parse a natural language shopping query into structured search terms
  */
 export async function parseQuery(userQuery) {
   if (!hasValidKey) {
+    console.log('   📝 Using basic query parsing (no LLM)');
     return {
       searchTerms: [userQuery],
       productType: 'general',
@@ -61,8 +67,9 @@ export async function parseQuery(userQuery) {
     };
   }
 
+  console.log(`   🧠 Parsing query via ${provider}...`);
   const response = await llm.chat.completions.create({
-    model: MODEL,
+    model,
     messages: [
       {
         role: 'system',
@@ -92,10 +99,11 @@ Return JSON only:
 }
 
 /**
- * Validate and rank search results - filter out irrelevant/non-product results
+ * Validate and rank search results
  */
 export async function rankResults(query, results) {
   if (!hasValidKey) {
+    console.log('   📊 Returning raw results (no LLM for ranking)');
     return {
       results: results.slice(0, 10).map((r, i) => ({
         rank: i + 1,
@@ -105,15 +113,16 @@ export async function rankResults(query, results) {
         trustScore: 50,
         overallScore: 50,
         warnings: [],
-        recommendation: 'Configure LLM for intelligent ranking',
+        recommendation: 'Add an LLM key for smart ranking',
       })),
-      bestPick: 'Add an LLM API key for smart ranking',
+      bestPick: 'Add an LLM API key for intelligent ranking',
       privacyNote: 'Search processed locally',
     };
   }
 
+  console.log(`   🏆 Ranking ${results.length} results via ${provider}...`);
   const response = await llm.chat.completions.create({
-    model: MODEL,
+    model,
     messages: [
       {
         role: 'system',
@@ -139,9 +148,9 @@ Return JSON:
       "price": "£XX.XX",
       "url": "direct product URL",
       "image": "image URL if available",
-      "relevanceScore": 0-100 (how well it matches the query),
-      "valueScore": 0-100 (price vs quality),
-      "trustScore": 0-100 (seller/store reliability),
+      "relevanceScore": 0-100,
+      "valueScore": 0-100,
+      "trustScore": 0-100,
       "overallScore": 0-100,
       "isActualProduct": true,
       "warnings": ["any red flags"],
@@ -153,11 +162,11 @@ Return JSON:
   "privacyNote": "Your search was processed with zero data retention"
 }
 
-ONLY include results where isActualProduct is true. Be strict — if it's a category page, brand page, or doesn't match the query, exclude it.`
+ONLY include results where isActualProduct is true.`
       },
       {
         role: 'user',
-        content: `User searched for: "${query}"\n\nRaw results from stores:\n${JSON.stringify(results, null, 2)}`
+        content: `User searched for: "${query}"\n\nRaw results:\n${JSON.stringify(results, null, 2)}`
       }
     ],
     response_format: { type: 'json_object' },
