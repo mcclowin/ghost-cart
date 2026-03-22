@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { parseQuery, rankResults } from '../services/venice.js';
 import { searchEbay } from '../services/search-ebay.js';
 import { searchGoogleShopping } from '../services/search-serp.js';
-import { searchTavily } from '../services/search-web.js';
+import { searchTavily, searchAllWebStores } from '../services/search-web.js';
 import { randomUUID } from 'crypto';
 
 const router = Router();
@@ -40,38 +40,31 @@ router.post('/search', async (req, res) => {
 
     const primarySearch = parsed.searchTerms?.[0] || query;
 
-    // ── Step 2 & 3: Search marketplaces in parallel ──
-    console.log('🏪 Step 2: Searching Google Shopping + eBay in parallel...');
-    const [shoppingResults, ebayResults] = await Promise.all([
+    // ── Step 2: Search ALL sources in parallel ──
+    console.log('🏪 Step 2: Searching Google Shopping + eBay + web stores in parallel...');
+    const [shoppingResults, ebayResults, webResults] = await Promise.all([
       searchGoogleShopping(primarySearch, {
         maxPrice: parsed.maxPrice,
         limit: maxResults,
       }),
       searchEbay(primarySearch, Math.min(maxResults, 5)),
+      searchAllWebStores(primarySearch, parsed.productType),
     ]);
 
     console.log(`   → Google Shopping: ${shoppingResults.length} results`);
     console.log(`   → eBay: ${ebayResults.length} results`);
+    console.log(`   → Web stores: ${webResults.length} results`);
 
-    // Combine all results
-    let allResults = [...shoppingResults, ...ebayResults];
+    // Combine all results — SerpAPI first (best data), then eBay, then web
+    let allResults = [...shoppingResults, ...ebayResults, ...webResults];
 
-    // ── Step 3b: Fallback to Tavily if no structured results ──
-    if (allResults.length === 0) {
-      console.log('🔄 No structured results — falling back to Tavily web search...');
-      const tavilyResults = await searchTavily(`buy ${primarySearch}`, [
-        'amazon.co.uk', 'ebay.co.uk', 'selfridges.com', 'argos.co.uk'
-      ]);
-      allResults = tavilyResults.map(r => ({
-        marketplace: extractDomain(r.url),
-        title: r.title,
-        url: r.url,
-        snippet: r.content,
-        price: null,
-        image: null,
-      }));
-      console.log(`   → Tavily fallback: ${allResults.length} results`);
-    }
+    // Deduplicate by URL
+    const seen = new Set();
+    allResults = allResults.filter(r => {
+      if (!r.url || seen.has(r.url)) return false;
+      seen.add(r.url);
+      return true;
+    });
 
     // ── Step 4: Enrich top results via Tavily page fetch (optional) ──
     // Only if we have results that need more detail
