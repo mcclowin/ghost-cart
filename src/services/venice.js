@@ -1,19 +1,18 @@
 import OpenAI from 'openai';
 
 // Supports Venice AI, OpenAI, or any OpenAI-compatible provider
-// Set LLM_PROVIDER=venice|openai in .env to switch
-const provider = process.env.LLM_PROVIDER || 'openai'; // default to openai for testing
+const provider = process.env.LLM_PROVIDER || 'openai';
 
 const config = {
   venice: {
-    apiKey: process.env.VENICE_API_KEY,
+    apiKey: process.env.VENICE_API_KEY || 'dummy-key-replace-me',
     baseURL: 'https://api.venice.ai/api/v1',
     model: 'venice-uncensored',
   },
   openai: {
-    apiKey: process.env.OPENAI_API_KEY,
+    apiKey: process.env.OPENAI_API_KEY || 'dummy-key-replace-me',
     baseURL: 'https://api.openai.com/v1',
-    model: 'gpt-4o-mini', // cheap for testing
+    model: 'gpt-4o-mini',
   },
 };
 
@@ -26,12 +25,26 @@ const llm = new OpenAI({
 
 const MODEL = activeConfig.model;
 
-console.log(`🧠 LLM Provider: ${provider} (model: ${MODEL})`);
+const hasValidKey = activeConfig.apiKey !== 'dummy-key-replace-me';
+console.log(`🧠 LLM Provider: ${provider} (model: ${MODEL}) ${hasValidKey ? '✅' : '⚠️ NO API KEY — LLM calls will fail'}`);
 
 /**
  * Parse a natural language shopping query into structured search terms
  */
 export async function parseQuery(userQuery) {
+  if (!hasValidKey) {
+    // Fallback: basic parsing without LLM
+    return {
+      searchTerms: [userQuery],
+      productType: 'general',
+      brand: null,
+      model: null,
+      maxPrice: null,
+      requirements: [],
+      marketplaces: ['ebay', 'amazon'],
+    };
+  }
+
   const response = await llm.chat.completions.create({
     model: MODEL,
     messages: [
@@ -61,6 +74,24 @@ Return JSON only:
  * Rank and compare search results from multiple marketplaces
  */
 export async function rankResults(query, results) {
+  if (!hasValidKey) {
+    // Fallback: return results as-is with basic scoring
+    return {
+      results: results.map((r, i) => ({
+        rank: i + 1,
+        ...r,
+        relevanceScore: 50,
+        valueScore: 50,
+        trustScore: 50,
+        overallScore: 50,
+        warnings: [],
+        recommendation: 'LLM not configured — showing raw results',
+      })),
+      bestPick: 'Configure an LLM API key for intelligent ranking',
+      privacyNote: 'Your search was processed locally (no LLM key configured)',
+    };
+  }
+
   const response = await llm.chat.completions.create({
     model: MODEL,
     messages: [
