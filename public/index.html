@@ -399,14 +399,7 @@
       <input type="text" id="searchInput" placeholder="What are you looking for? e.g. 'mustard puffy jacket women's size M'" />
       <button id="searchBtn">Search</button>
     </div>
-    <details style="margin-bottom:16px;font-size:0.82em;color:#888;">
-      <summary style="cursor:pointer;color:#7b68ee;">⚙️ API Key</summary>
-      <div style="margin-top:8px;display:flex;gap:8px;align-items:center;">
-        <input type="password" id="apiKeyInput" placeholder="gc_..." style="flex:1;padding:8px 12px;border-radius:8px;border:1px solid #333;background:#141414;color:#fff;font-size:0.95em;outline:none;" />
-        <button id="saveApiKey" style="padding:8px 14px;border-radius:8px;border:1px solid #333;background:#222;color:#ccc;cursor:pointer;font-size:0.85em;">Save</button>
-      </div>
-      <p style="margin-top:6px;color:#666;">Required when the server has authentication enabled. Stored in localStorage.</p>
-    </details>
+
 
     <div id="status" class="status"></div>
     <div id="results" class="results"></div>
@@ -527,33 +520,11 @@
     let currentBuyPaymentId = null;
     let currentPaymentPollTimer = null;
     const SHIPPING_STORAGE_KEY = 'ghostcart.shippingAddress';
-    const API_KEY_STORAGE_KEY = 'ghostcart.apiKey';
 
-    function getApiKey() {
-      return localStorage.getItem(API_KEY_STORAGE_KEY) || '';
-    }
 
     function apiFetchHeaders(extra = {}) {
-      const headers = { 'Content-Type': 'application/json', ...extra };
-      const key = getApiKey();
-      if (key) headers['Authorization'] = `Bearer ${key}`;
-      return headers;
+      return { 'Content-Type': 'application/json', ...extra };
     }
-
-    // Load saved API key
-    (function() {
-      const saved = getApiKey();
-      if (saved) document.getElementById('apiKeyInput').value = saved;
-    })();
-
-    document.getElementById('saveApiKey').addEventListener('click', () => {
-      const key = document.getElementById('apiKeyInput').value.trim();
-      if (key) {
-        localStorage.setItem(API_KEY_STORAGE_KEY, key);
-      } else {
-        localStorage.removeItem(API_KEY_STORAGE_KEY);
-      }
-    });
     const skillsPanel = document.getElementById('skillsPanel');
     const skillsToggle = document.getElementById('skillsToggle');
 
