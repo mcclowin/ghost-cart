@@ -239,7 +239,6 @@ function scoreResult(result, priceStats, context) {
 
   trustScore = clamp(trustScore);
 
-  const isActualProduct = hasPrice && !genericPage && relevanceScore >= 35 && hasColor && hasStyle && hasBrand && hasModel && hasProductType;
   if (!hasPrice) warnings.push('No visible price');
   if (genericPage) warnings.push('Looks like a category/search page');
   if (context.color && !hasColor) warnings.push(`Missing requested color: ${context.color}`);
@@ -248,6 +247,14 @@ function scoreResult(result, priceStats, context) {
   if (context.model && !hasModel) warnings.push(`Missing requested model: ${context.model}`);
 
   const overallScore = clamp((relevanceScore * 0.5) + (valueScore * 0.3) + (trustScore * 0.2));
+  const failsHardRequirement = !hasPrice
+    || genericPage
+    || relevanceScore < 40
+    || overallScore < 45
+    || (context.color && !hasColor)
+    || (context.brand && !hasBrand)
+    || (context.model && !hasModel);
+  const isActualProduct = !failsHardRequirement;
 
   let recommendation = 'Balanced pick based on relevance, price, and seller trust';
   if (overallScore >= 85) recommendation = 'Top pick with strong relevance and pricing';

@@ -36,6 +36,54 @@
     .search-box button:hover { background: #6a56d6; }
     .search-box button:disabled { opacity: 0.5; cursor: not-allowed; }
 
+    .payment-lab {
+      margin: 12px 0 28px;
+      padding: 16px;
+      border: 1px solid #222;
+      border-radius: 14px;
+      background: #121212;
+    }
+    .payment-lab h3 {
+      font-size: 1em;
+      margin-bottom: 6px;
+    }
+    .payment-lab p {
+      color: #888;
+      font-size: 0.88em;
+      margin-bottom: 12px;
+    }
+    .payment-lab-grid {
+      display: grid;
+      grid-template-columns: 120px 1fr auto auto;
+      gap: 10px;
+    }
+    .payment-lab-grid input {
+      padding: 12px 14px;
+      border-radius: 10px;
+      border: 1px solid #333;
+      background: #141414;
+      color: #fff;
+      font-size: 0.95em;
+      outline: none;
+    }
+    .payment-lab-grid button {
+      padding: 12px 16px;
+      border-radius: 10px;
+      border: none;
+      color: white;
+      cursor: pointer;
+      font-weight: 600;
+    }
+    .btn-stripe { background: #635bff; }
+    .btn-locus { background: #2775ca; }
+    .payment-lab-status {
+      margin-top: 12px;
+      color: #aaa;
+      font-size: 0.85em;
+      line-height: 1.5;
+      word-break: break-word;
+    }
+
     .status { text-align: center; padding: 20px; color: #888; }
     .status.searching { color: #7b68ee; }
     .spinner { animation: spin 1s linear infinite; display: inline-block; }
@@ -159,6 +207,30 @@
       margin-top: 14px; font-size: 0.85em; color: #aaa; line-height: 1.5;
     }
     .buy-status a { color: #7b68ee; }
+    .address-form {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin-bottom: 16px;
+    }
+    .address-form input {
+      width: 100%;
+      padding: 10px 12px;
+      border-radius: 10px;
+      border: 1px solid #333;
+      background: #141414;
+      color: #fff;
+      outline: none;
+    }
+    .address-form .full-span {
+      grid-column: 1 / -1;
+    }
+    .helper-note {
+      color: #777;
+      font-size: 0.8em;
+      margin-bottom: 10px;
+      line-height: 1.4;
+    }
   </style>
 </head>
 <body>
@@ -172,6 +244,18 @@
     <div class="search-box">
       <input type="text" id="searchInput" placeholder="What are you looking for? e.g. 'mustard puffy jacket women's size M'" />
       <button id="searchBtn">Search</button>
+    </div>
+
+    <div class="payment-lab">
+      <h3>GhostCart Payment Test</h3>
+      <p>Test GhostCart’s own collection flows: Stripe for human card payments, Locus for USDC and agent-payable checkout sessions.</p>
+      <div class="payment-lab-grid">
+        <input type="number" min="0.1" step="0.01" id="paymentAmount" value="1.00" placeholder="Amount" />
+        <input type="text" id="paymentDescription" value="GhostCart demo payment" placeholder="Description" />
+        <button class="btn-stripe" id="startStripeCheckout">Stripe</button>
+        <button class="btn-locus" id="startLocusCheckout">Locus</button>
+      </div>
+      <div id="paymentLabStatus" class="payment-lab-status"></div>
     </div>
 
     <div id="status" class="status"></div>
@@ -189,8 +273,20 @@
 
   <div class="modal-overlay" id="paymentModal">
     <div class="modal">
-      <h3>How would you like to pay?</h3>
+      <h3>Complete your purchase</h3>
       <div id="buyItemDetails" style="margin-bottom:16px; color:#aaa;"></div>
+      <div class="helper-note">Confirm where GhostCart should ship this order, then choose how you want to fund the purchase.</div>
+      <div class="address-form">
+        <input id="shipFullName" class="full-span" placeholder="Full name" />
+        <input id="shipEmail" placeholder="Email" />
+        <input id="shipPhone" placeholder="Phone (optional)" />
+        <input id="shipLine1" class="full-span" placeholder="Address line 1" />
+        <input id="shipLine2" class="full-span" placeholder="Address line 2 (optional)" />
+        <input id="shipCity" placeholder="City" />
+        <input id="shipState" placeholder="State / County" />
+        <input id="shipPostalCode" placeholder="Postal code" />
+        <input id="shipCountry" placeholder="Country" value="United Kingdom" />
+      </div>
       <div class="payment-options">
         <button class="payment-btn" style="border-color:#635bff" id="btnCard">💳 Pay with Card</button>
         <button class="payment-btn" style="border-color:#2775ca" id="btnUSDC">🔵 Pay with USDC (Base)</button>
@@ -208,6 +304,9 @@
     let currentBuyCheckpointHistory = [];
     let currentBuyLatestStepCount = -1;
     let currentBuyTerminalSeen = false;
+    let currentBuyPaymentId = null;
+    let currentPaymentPollTimer = null;
+    const SHIPPING_STORAGE_KEY = 'ghostcart.shippingAddress';
 
     function formatPrice(price) {
       if (!price) return '—';
@@ -222,9 +321,13 @@
     document.getElementById('searchInput').addEventListener('keydown', e => {
       if (e.key === 'Enter') doSearch();
     });
-    document.getElementById('btnCard').addEventListener('click', () => startGhostCartBuy('card'));
-    document.getElementById('btnUSDC').addEventListener('click', () => startGhostCartBuy('usdc'));
+    document.getElementById('btnCard').addEventListener('click', () => startGhostCartPurchase('stripe'));
+    document.getElementById('btnUSDC').addEventListener('click', () => startGhostCartPurchase('locus'));
     document.getElementById('btnCancel').addEventListener('click', closeModal);
+    document.getElementById('startStripeCheckout').addEventListener('click', () => startPaymentCheckout('stripe'));
+    document.getElementById('startLocusCheckout').addEventListener('click', () => startPaymentCheckout('locus'));
+
+    loadSavedShippingAddress();
 
     async function doSearch() {
       const query = document.getElementById('searchInput').value.trim();
@@ -372,6 +475,7 @@
       const item = currentData?.results?.results?.[index];
       currentBuyIndex = index;
       currentBuyTaskId = null;
+      currentBuyPaymentId = null;
       currentBuyCheckpointHistory = [];
       currentBuyLatestStepCount = -1;
       currentBuyTerminalSeen = false;
@@ -380,8 +484,59 @@
         document.getElementById('buyItemDetails').innerHTML = 
           `<strong>${item.title}</strong><br>${item.price} from ${item.marketplace}`;
       }
-      document.getElementById('buyStatus').innerHTML = 'GhostCart will try to add this item to cart and reach the checkout page without submitting payment.';
+      document.getElementById('buyStatus').innerHTML = 'Pay GhostCart first. After payment is confirmed, GhostCart will continue the purchase in the background and keep this status updated.';
       document.getElementById('paymentModal').classList.add('active');
+    }
+
+    function getShippingAddress() {
+      return {
+        fullName: document.getElementById('shipFullName').value.trim(),
+        email: document.getElementById('shipEmail').value.trim(),
+        phone: document.getElementById('shipPhone').value.trim(),
+        line1: document.getElementById('shipLine1').value.trim(),
+        line2: document.getElementById('shipLine2').value.trim(),
+        city: document.getElementById('shipCity').value.trim(),
+        state: document.getElementById('shipState').value.trim(),
+        postalCode: document.getElementById('shipPostalCode').value.trim(),
+        country: document.getElementById('shipCountry').value.trim(),
+      };
+    }
+
+    function saveShippingAddress(address) {
+      localStorage.setItem(SHIPPING_STORAGE_KEY, JSON.stringify(address));
+    }
+
+    function loadSavedShippingAddress() {
+      try {
+        const raw = localStorage.getItem(SHIPPING_STORAGE_KEY);
+        if (!raw) return;
+        const address = JSON.parse(raw);
+        document.getElementById('shipFullName').value = address.fullName || '';
+        document.getElementById('shipEmail').value = address.email || '';
+        document.getElementById('shipPhone').value = address.phone || '';
+        document.getElementById('shipLine1').value = address.line1 || '';
+        document.getElementById('shipLine2').value = address.line2 || '';
+        document.getElementById('shipCity').value = address.city || '';
+        document.getElementById('shipState').value = address.state || '';
+        document.getElementById('shipPostalCode').value = address.postalCode || '';
+        document.getElementById('shipCountry').value = address.country || 'United Kingdom';
+      } catch {}
+    }
+
+    function validateShippingAddress(address) {
+      const required = [
+        ['Full name', address.fullName],
+        ['Email', address.email],
+        ['Address line 1', address.line1],
+        ['City', address.city],
+        ['Postal code', address.postalCode],
+        ['Country', address.country],
+      ];
+      const missing = required.filter(([, value]) => !value).map(([label]) => label);
+      if (missing.length > 0) {
+        return `Please fill in: ${missing.join(', ')}`;
+      }
+      return null;
     }
 
     function setBuyButtonsDisabled(disabled) {
@@ -393,61 +548,192 @@
       const value = String(status || '').toUpperCase();
       return value.includes('COMPLETE')
         || value.includes('SUCCESS')
+        || value.includes('FINISH')
         || value.includes('FAILED')
         || value.includes('ERROR')
         || value.includes('CANCEL')
         || value.includes('STOP');
     }
 
-    async function startGhostCartBuy(paymentMethod) {
+    function parseAmountValue(price) {
+      if (typeof price === 'number') return price.toFixed(2);
+      if (typeof price === 'string') {
+        const match = price.match(/(\d+(?:[.,]\d{1,2})?)/);
+        if (match) return Number(match[1].replace(',', '.')).toFixed(2);
+      }
+      if (price && typeof price === 'object' && price.amount != null) {
+        const numeric = Number(price.amount);
+        if (Number.isFinite(numeric)) return numeric.toFixed(2);
+      }
+      return '1.00';
+    }
+
+    function purchaseStageLabel(purchase) {
+      const status = String(purchase?.status || '').toUpperCase();
+      const stage = String(purchase?.stage || '').toLowerCase();
+      if (status.includes('PENDING_APPROVAL')) return 'Preparing secure purchase...';
+      if (status.includes('FINISH') || status.includes('COMPLETE') || status.includes('SUCCESS')) {
+        if (stage === 'cart') return 'Item secured in cart.';
+        if (stage === 'shipping' || stage === 'payment') return 'Merchant checkout prepared in the background.';
+        return 'Background purchase attempt finished.';
+      }
+      if (stage === 'cart') return 'Adding item to cart...';
+      if (stage === 'shipping' || stage === 'payment') return 'Proceeding through checkout...';
+      return 'Opening store and preparing purchase...';
+    }
+
+    function renderPurchaseFlowStatus(payment, purchase, receipt) {
+      const lines = [];
+      if (!payment) {
+        document.getElementById('buyStatus').textContent = 'Waiting for payment session...';
+        return;
+      }
+
+      if (payment.status === 'PENDING') {
+        lines.push('Awaiting payment confirmation...');
+        if (payment.checkoutUrl) {
+          lines.push(`<a href="${payment.checkoutUrl}" target="_blank" rel="noopener">Complete payment ↗</a>`);
+        }
+      } else if (payment.status === 'PAID') {
+        lines.push('Payment received.');
+        if (purchase) {
+          lines.push(purchaseStageLabel(purchase));
+        } else {
+          lines.push('Starting purchase in the background...');
+        }
+        if (!isTerminalBuyStatus(purchase?.status)) {
+          lines.push('You can close this tab. GhostCart will keep processing in the background.');
+        }
+      } else if (payment.status === 'EXPIRED' || payment.status === 'CANCELLED' || payment.status === 'FAILED') {
+        lines.push(`Payment ${String(payment.status).toLowerCase()}.`);
+      }
+
+      if (purchase?.summary && !isTerminalBuyStatus(purchase?.status)) {
+        lines.push(`Latest update: ${purchase.summary}`);
+      }
+
+      if (purchase?.approvalUrl) {
+        lines.push(`<a href="${purchase.approvalUrl}" target="_blank" rel="noopener">Approve secure automation ↗</a>`);
+      }
+
+      if (receipt) {
+        lines.push(`Receipt issued: ${receipt.id}`);
+      }
+
+      const checkpointKey = [
+        payment.status,
+        purchase?.status,
+        purchase?.stage,
+        purchase?.stepCount,
+        purchase?.summary,
+      ].join('|');
+
+      if (checkpointKey && !currentBuyCheckpointHistory.some(entry => entry.key === checkpointKey)) {
+        currentBuyCheckpointHistory.push({
+          key: checkpointKey,
+          label: payment.status === 'PAID' ? 'Purchase' : 'Payment',
+          detail: lines[0] || 'Update received',
+        });
+      }
+
+      const historyHtml = currentBuyCheckpointHistory.length > 0
+        ? `<div style="margin-top:12px"><strong>Progress</strong><ol style="margin:8px 0 0 18px;padding:0;">${
+            currentBuyCheckpointHistory.map(entry => `<li>${entry.detail}</li>`).join('')
+          }</ol></div>`
+        : '';
+
+      document.getElementById('buyStatus').innerHTML = `${lines.join('<br>')}${historyHtml}`;
+    }
+
+    async function pollPurchasePayment(paymentId) {
+      try {
+        const res = await fetch(`/api/payments/${paymentId}`);
+        const data = await res.json();
+        if (data.error) {
+          document.getElementById('buyStatus').textContent = `Status error: ${data.message || data.error}`;
+          return;
+        }
+
+        const purchase = data.purchase || null;
+        const purchaseStepCount = Number(purchase?.stepCount ?? -1);
+        const incomingTerminal = isTerminalPaymentStatus(data.payment?.status) && (!purchase || isTerminalBuyStatus(purchase?.status));
+
+        if (currentBuyTerminalSeen && !incomingTerminal) return;
+        if (purchaseStepCount >= 0 && purchaseStepCount < currentBuyLatestStepCount && !incomingTerminal) return;
+
+        currentBuyLatestStepCount = Math.max(currentBuyLatestStepCount, purchaseStepCount);
+        if (incomingTerminal) currentBuyTerminalSeen = true;
+
+        renderPurchaseFlowStatus(data.payment, purchase, data.receipt);
+
+        if (!incomingTerminal) {
+          currentBuyPollTimer = setTimeout(() => pollPurchasePayment(paymentId), 4000);
+        }
+      } catch (err) {
+        document.getElementById('buyStatus').textContent = `Status error: ${err.message}`;
+      }
+    }
+
+    async function startGhostCartPurchase(provider) {
       const item = currentData?.results?.results?.[currentBuyIndex];
       if (!item) return;
+      const shippingAddress = getShippingAddress();
+      const shippingError = validateShippingAddress(shippingAddress);
+      if (shippingError) {
+        document.getElementById('buyStatus').textContent = shippingError;
+        return;
+      }
+      saveShippingAddress(shippingAddress);
 
+      if (currentBuyPollTimer) clearTimeout(currentBuyPollTimer);
+      currentBuyCheckpointHistory = [];
+      currentBuyLatestStepCount = -1;
+      currentBuyTerminalSeen = false;
       setBuyButtonsDisabled(true);
-      document.getElementById('buyStatus').innerHTML = 'Starting GhostCart checkout automation...';
+      document.getElementById('buyStatus').innerHTML = 'Creating secure payment session...';
 
       try {
-        const res = await fetch('/api/buy', {
+        const res = await fetch('/api/payments/checkout', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            url: item.url,
-            title: item.title,
-            price: item.price,
-            marketplace: item.marketplace,
-            paymentMethod,
+            provider,
+            amount: parseAmountValue(item.price),
+            description: `GhostCart purchase: ${item.title}`,
+            metadata: {
+              source: 'ghostcart-buy-modal',
+              purchaseIntent: {
+                url: item.url,
+                title: item.title,
+                price: item.price,
+                marketplace: item.marketplace,
+                paymentMethod: provider === 'locus' ? 'usdc' : 'card',
+                shippingAddress,
+              },
+            },
           }),
         });
 
         const data = await res.json();
         if (data.error) {
-          if (data.error === 'locus_insufficient_balance') {
-            const parts = [
-              data.message || 'Locus wallet is not funded yet.',
-              data.requiredAmount ? `Required for this task: ${data.requiredAmount} USDC` : null,
-              data.walletBalance != null ? `Current wallet balance: ${data.walletBalance} USDC` : null,
-              data.nextStep || 'Request beta credits or fund the wallet, then try again.',
-            ].filter(Boolean);
-            document.getElementById('buyStatus').innerHTML = parts.join('<br>');
-          } else {
-            document.getElementById('buyStatus').textContent = `Error: ${data.message || data.error}`;
-          }
+          document.getElementById('buyStatus').textContent = `Error: ${data.message || data.error}`;
           return;
         }
 
-        currentBuyTaskId = data.taskId || null;
+        currentBuyPaymentId = data.paymentId || null;
 
-        if (data.approvalUrl) {
-          document.getElementById('buyStatus').innerHTML = `
-            ${data.message || 'Approval required before checkout automation can start.'}<br>
-            <a href="${data.approvalUrl}" target="_blank" rel="noopener">Approve in Locus ↗</a>
-          `;
-        } else {
-          document.getElementById('buyStatus').textContent = data.message || 'Checkout automation started.';
+        if (data.checkoutUrl) {
+          window.open(data.checkoutUrl, '_blank', 'noopener');
         }
 
-        if (currentBuyTaskId) {
-          pollBuyTask(currentBuyTaskId);
+        document.getElementById('buyStatus').innerHTML = [
+          'Complete payment in the opened checkout window.',
+          data.checkoutUrl ? `<a href="${data.checkoutUrl}" target="_blank" rel="noopener">Open payment again ↗</a>` : null,
+          'After payment is confirmed, GhostCart will continue the purchase in the background.',
+        ].filter(Boolean).join('<br>');
+
+        if (currentBuyPaymentId) {
+          pollPurchasePayment(currentBuyPaymentId);
         }
       } catch (err) {
         document.getElementById('buyStatus').textContent = `Error: ${err.message}`;
@@ -531,6 +817,94 @@
     function closeModal() {
       if (currentBuyPollTimer) clearTimeout(currentBuyPollTimer);
       document.getElementById('paymentModal').classList.remove('active');
+    }
+
+    function isTerminalPaymentStatus(status) {
+      return ['PAID', 'EXPIRED', 'CANCELLED', 'FAILED'].includes(String(status || '').toUpperCase());
+    }
+
+    function renderPaymentStatus(payment, receipt) {
+      const parts = [];
+      if (payment) {
+        parts.push(`Provider: ${payment.provider}`);
+        parts.push(`Status: ${payment.status}`);
+        if (payment.providerStatus) parts.push(`Provider status: ${payment.providerStatus}`);
+        parts.push(`Amount: ${payment.amount} ${payment.currency}`);
+        if (payment.checkoutUrl) {
+          parts.push(`<a href="${payment.checkoutUrl}" target="_blank" rel="noopener">Open checkout ↗</a>`);
+        }
+        if (payment.externalId) parts.push(`Session: ${payment.externalId}`);
+        if (payment.paidAt) parts.push(`Paid at: ${payment.paidAt}`);
+      }
+      if (receipt) {
+        parts.push(`Receipt: ${receipt.id}`);
+        if (receipt.paymentTxHash) parts.push(`On-chain tx: ${receipt.paymentTxHash}`);
+        if (receipt.payerAddress) parts.push(`Payer: ${receipt.payerAddress}`);
+      }
+      document.getElementById('paymentLabStatus').innerHTML = parts.join('<br>');
+    }
+
+    async function pollPaymentStatus(paymentId) {
+      try {
+        const res = await fetch(`/api/payments/${paymentId}`);
+        const data = await res.json();
+        if (data.error) {
+          document.getElementById('paymentLabStatus').textContent = `Payment status error: ${data.message || data.error}`;
+          return;
+        }
+
+        renderPaymentStatus(data.payment, data.receipt);
+        if (!isTerminalPaymentStatus(data.payment?.status)) {
+          currentPaymentPollTimer = setTimeout(() => pollPaymentStatus(paymentId), 4000);
+        }
+      } catch (err) {
+        document.getElementById('paymentLabStatus').textContent = `Payment status error: ${err.message}`;
+      }
+    }
+
+    async function startPaymentCheckout(provider) {
+      const amount = document.getElementById('paymentAmount').value.trim();
+      const description = document.getElementById('paymentDescription').value.trim() || 'GhostCart demo payment';
+      const statusEl = document.getElementById('paymentLabStatus');
+
+      if (currentPaymentPollTimer) clearTimeout(currentPaymentPollTimer);
+      statusEl.textContent = `Creating ${provider} checkout session...`;
+
+      try {
+        const res = await fetch('/api/payments/checkout', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            provider,
+            amount,
+            description,
+          }),
+        });
+
+        const data = await res.json();
+        if (data.error) {
+          statusEl.textContent = `${data.message || data.error}`;
+          return;
+        }
+
+        statusEl.innerHTML = [
+          `Created ${provider} checkout session.`,
+          `Payment ID: ${data.paymentId}`,
+          data.sessionId ? `Session: ${data.sessionId}` : null,
+          data.note || null,
+          data.checkoutUrl ? `<a href="${data.checkoutUrl}" target="_blank" rel="noopener">Open checkout ↗</a>` : null,
+        ].filter(Boolean).join('<br>');
+
+        if (data.checkoutUrl) {
+          window.open(data.checkoutUrl, '_blank', 'noopener');
+        }
+
+        if (data.paymentId) {
+          pollPaymentStatus(data.paymentId);
+        }
+      } catch (err) {
+        statusEl.textContent = `Payment start error: ${err.message}`;
+      }
     }
   </script>
 </body>

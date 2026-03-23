@@ -4,3 +4,5 @@ node_modules/
 dist/
 *.log
 .locus.beta.json
+.erc8004.json
+.synthesis-credentials

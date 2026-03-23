@@ -1,3 +1,5 @@
+import crypto from 'crypto';
+
 const LOCUS_API_BASE = (process.env.LOCUS_API_BASE || 'https://api.paywithlocus.com/api').replace(/\/$/, '');
 
 function getLocusApiKey() {
@@ -16,7 +18,7 @@ export function hasLocusKey() {
   return !!getLocusApiKey();
 }
 
-export async function callLocusWrapped(path, payload) {
+async function callLocus(path, { method = 'GET', payload } = {}) {
   const apiKey = getLocusApiKey();
   if (!apiKey) {
     return {
@@ -30,13 +32,13 @@ export async function callLocusWrapped(path, payload) {
     };
   }
 
-  const response = await fetch(`${LOCUS_API_BASE}/wrapped/${path}`, {
-    method: 'POST',
+  const response = await fetch(`${LOCUS_API_BASE}${path.startsWith('/') ? path : `/${path}`}`, {
+    method,
     headers: {
       'Authorization': `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
+      ...(payload ? { 'Content-Type': 'application/json' } : {}),
     },
-    body: JSON.stringify(payload),
+    ...(payload ? { body: JSON.stringify(payload) } : {}),
   });
 
   const text = await response.text();
@@ -45,6 +47,13 @@ export async function callLocusWrapped(path, payload) {
     status: response.status,
     body: parseJsonSafely(text),
   };
+}
+
+export async function callLocusWrapped(path, payload) {
+  return callLocus(`/wrapped/${path}`, {
+    method: 'POST',
+    payload,
+  });
 }
 
 export async function firecrawlScrape(url) {
@@ -68,6 +77,27 @@ export async function browserUseGetTaskStatus(taskId) {
 
 export async function browserUseGetTask(taskId) {
   return callLocusWrapped('browser-use/get-task', { taskId });
+}
+
+export async function createLocusCheckoutSession(payload) {
+  return callLocus('/checkout/sessions', {
+    method: 'POST',
+    payload,
+  });
+}
+
+export async function getLocusCheckoutSession(sessionId) {
+  return callLocus(`/checkout/sessions/${encodeURIComponent(sessionId)}`);
+}
+
+export function verifyLocusWebhookSignature(payload, signature, secret) {
+  if (!signature || !secret) return false;
+  const expected = `sha256=${crypto.createHmac('sha256', secret).update(payload).digest('hex')}`;
+  try {
+    return crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected));
+  } catch {
+    return false;
+  }
 }
 
 export function extractLocusApproval(body) {

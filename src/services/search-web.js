@@ -36,6 +36,7 @@ const MARKETPLACE_DOMAINS = {
 
 const CATEGORY_URL_PATTERNS = [
   /\/cat\//i,
+  /\/categories\//i,
   /\/search\?/i,
   /\/refine/i,
   /\/collections?\//i,
@@ -61,6 +62,13 @@ const COLOR_SYNONYMS = {
   'navy': ['navy', 'dark blue'],
   'grey': ['grey', 'gray'],
   'beige': ['beige', 'cream', 'stone', 'sand'],
+};
+const STYLE_SYNONYMS = {
+  puffy: ['puffy', 'puffer', 'padded', 'down', 'insulated', 'bubble', 'quilted'],
+  puffer: ['puffy', 'puffer', 'padded', 'down', 'insulated', 'bubble', 'quilted'],
+  padded: ['puffy', 'puffer', 'padded', 'down', 'insulated', 'bubble', 'quilted'],
+  insulated: ['insulated', 'padded', 'down', 'puffer', 'quilted'],
+  quilted: ['quilted', 'padded', 'insulated', 'puffer'],
 };
 
 /**
@@ -99,7 +107,20 @@ function getMarketplaceDomains(marketplace) {
 }
 
 function isCategoryUrl(url) {
-  return CATEGORY_URL_PATTERNS.some(pattern => pattern.test(url));
+  try {
+    const parsed = new URL(url);
+    const pathname = parsed.pathname || '/';
+    const segments = pathname.split('/').filter(Boolean);
+    if (CATEGORY_URL_PATTERNS.some(pattern => pattern.test(url))) {
+      return true;
+    }
+    if (!isProductUrl(url) && segments.length <= 1 && !parsed.search) {
+      return true;
+    }
+    return false;
+  } catch {
+    return CATEGORY_URL_PATTERNS.some(pattern => pattern.test(url));
+  }
 }
 
 function isProductUrl(url) {
@@ -250,6 +271,9 @@ export async function resolveShoppingResults(shoppingResults, limit = 12, option
 export async function validateResolvedResults(results, parsed = {}, limit = 8) {
   const candidates = results.slice(0, limit);
   const queryColor = (parsed.color || '').toLowerCase();
+  const queryStyle = (parsed.style || '').toLowerCase();
+  const styleTerms = queryStyle ? (STYLE_SYNONYMS[queryStyle] || [queryStyle]) : [];
+  const productTypeTerms = tokenize(parsed.productType || '');
 
   const validated = await Promise.all(candidates.map(async (item) => {
     let page;
@@ -264,6 +288,12 @@ export async function validateResolvedResults(results, parsed = {}, limit = 8) {
 
     const text = markdown.toLowerCase();
     let score = 0;
+    const pageColors = extractColorTokens(text);
+    const hasColor = queryColor ? colorsMatch(queryColor, pageColors) : true;
+    const hasStyle = styleTerms.length > 0 ? styleTerms.some(term => text.includes(term)) : true;
+    const hasProductType = productTypeTerms.length > 0 ? productTypeTerms.some(term => text.includes(term)) : true;
+    const addToCartDetected = /\badd to (bag|cart|basket)\b/.test(text);
+    const variantDetected = /\bsize\b.*\b(s|m|l|xl)\b/.test(text);
 
     // Title overlap
     const overlap = titleOverlap(item.title, text);
@@ -271,14 +301,21 @@ export async function validateResolvedResults(results, parsed = {}, limit = 8) {
 
     // Color check (soft — use synonyms)
     if (queryColor) {
-      const pageColors = extractColorTokens(text);
-      if (colorsMatch(queryColor, pageColors)) {
+      if (hasColor) {
         score += 0.3;
       } else if (pageColors.length > 0) {
         score -= 0.2; // wrong color, but don't kill it
       }
     } else {
       score += 0.15; // no color requirement, neutral
+    }
+
+    if (styleTerms.length > 0) {
+      score += hasStyle ? 0.15 : -0.08;
+    }
+
+    if (productTypeTerms.length > 0) {
+      score += hasProductType ? 0.1 : -0.05;
     }
 
     // Price on page
@@ -288,13 +325,15 @@ export async function validateResolvedResults(results, parsed = {}, limit = 8) {
     }
 
     // Category page detection
-    if (/\b(filter|sort by|view all|showing \d+|results for|shop all)\b/.test(text)) {
+    if (/\b(filter|sort by|view all|showing \d+|results for|shop all|brand page)\b/.test(text)) {
       score -= 0.5;
     }
+    if (isCategoryUrl(item.url)) score -= 0.5;
+    if (!addToCartDetected && !variantDetected && !/\b(£|\$|€)\s?\d/.test(text)) score -= 0.25;
 
     // Product page signals
-    if (/\badd to (bag|cart|basket)\b/.test(text)) score += 0.2;
-    if (/\bsize\b.*\b(s|m|l|xl)\b/.test(text)) score += 0.1;
+    if (addToCartDetected) score += 0.2;
+    if (variantDetected) score += 0.1;
 
     if (score < 0.1) {
       console.log(`   🚫 Validation rejected: ${item.title.slice(0, 50)} (score: ${score.toFixed(2)})`);
@@ -306,6 +345,15 @@ export async function validateResolvedResults(results, parsed = {}, limit = 8) {
       snippet: text.slice(0, 280).replace(/\s+/g, ' ').trim() || item.snippet,
       validated: true,
       validationScore: score,
+      validationSummary: {
+        overlap,
+        hasColor,
+        pageColors,
+        hasStyle,
+        hasProductType,
+        addToCartDetected,
+        variantDetected,
+      },
     };
   }));
 

@@ -7,7 +7,8 @@
   "scripts": {
     "dev": "node --watch src/index.js",
     "start": "node src/index.js",
-    "test": "echo \"No tests yet\" && exit 0"
+    "test": "echo \"No tests yet\" && exit 0",
+    "erc8004:register": "node scripts/register-erc8004.mjs"
   },
   "keywords": [
     "ai-agent",
@@ -24,7 +25,9 @@
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
     "helmet": "^8.0.0",
-    "openai": "^4.86.2"
+    "openai": "^4.86.2",
+    "stripe": "^20.4.1",
+    "viem": "^2.47.6"
   },
   "packageManager": "pnpm@10.31.0+sha512.e3927388bfaa8078ceb79b748ffc1e8274e84d75163e67bc22e06c0d3aed43dd153151cbf11d7f8301ff4acb98c68bdc5cadf6989532801ffafe3b3e4a63c268"
 }
