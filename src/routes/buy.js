@@ -56,9 +56,20 @@ function buildCheckoutTask({ url, title, price, marketplace, paymentMethod }) {
 }
 
 function parseJsonSafely(value) {
-  if (!value || typeof value !== 'string') return null;
+  if (value == null) return null;
+  if (typeof value !== 'string') {
+    return typeof value === 'object' ? value : null;
+  }
   try {
-    return JSON.parse(value);
+    const parsed = JSON.parse(value);
+    if (typeof parsed === 'string' && parsed.trim().startsWith('{')) {
+      try {
+        return JSON.parse(parsed);
+      } catch {
+        return parsed;
+      }
+    }
+    return parsed;
   } catch {
     return null;
   }
@@ -75,11 +86,58 @@ function inferCheckoutStage(summary, status, taskData = {}) {
   return 'product';
 }
 
+function parseBrowserAction(action) {
+  const parsed = parseJsonSafely(action);
+  if (!parsed || typeof parsed !== 'object') return null;
+  const [kind, payload] = Object.entries(parsed)[0] || [];
+  if (!kind) return null;
+
+  if (kind === 'navigate') return `Navigate to ${payload?.url || 'page'}`;
+  if (kind === 'click') return `Click element ${payload?.index ?? ''}`.trim();
+  if (kind === 'wait') return `Wait ${payload?.seconds ?? ''}s`.trim();
+  if (kind === 'evaluate') return 'Run page script';
+  if (kind === 'input_text') return `Type into element ${payload?.index ?? ''}`.trim();
+  return kind;
+}
+
+function summariseLatestStep(taskData = {}) {
+  const steps = Array.isArray(taskData.steps) ? taskData.steps : [];
+  const lastStep = steps.at(-1) || null;
+  if (!lastStep) {
+    return {
+      stepCount: 0,
+      checkpoint: null,
+      lastAction: null,
+      screenshotUrl: null,
+      currentUrl: taskData.currentUrl || taskData.url || taskData.pageUrl || taskData.finalUrl || null,
+    };
+  }
+
+  const actions = Array.isArray(lastStep.actions) ? lastStep.actions : [];
+  const lastAction = parseBrowserAction(actions.at(-1)) || null;
+  const checkpoint = truncateText(
+    lastStep.memory
+      || lastStep.evaluationPreviousGoal
+      || lastStep.nextGoal
+      || lastAction,
+    700
+  );
+
+  return {
+    stepCount: steps.length,
+    checkpoint,
+    lastAction,
+    screenshotUrl: lastStep.screenshotUrl || null,
+    currentUrl: lastStep.url || taskData.currentUrl || taskData.url || taskData.pageUrl || taskData.finalUrl || null,
+  };
+}
+
 function extractTaskSnapshot(statusBody, taskBody) {
   const statusData = statusBody?.data || {};
   const taskData = taskBody?.data || {};
   const status = statusData.status || taskData.status || 'UNKNOWN';
-  const pageUrl = taskData.currentUrl || taskData.url || taskData.pageUrl || taskData.finalUrl || null;
+  const stepInfo = summariseLatestStep(taskData);
+  const pageUrl = stepInfo.currentUrl;
   const rawSummary = taskData.summary
     || taskData.output
     || taskData.result
@@ -87,10 +145,10 @@ function extractTaskSnapshot(statusBody, taskBody) {
     || statusData.message
     || statusData.summary;
   const structured = parseJsonSafely(rawSummary) || parseJsonSafely(taskData.output) || parseJsonSafely(taskData.result);
-  const summary = truncateText(structured?.summary || rawSummary);
+  const summary = truncateText(structured?.summary || rawSummary || stepInfo.checkpoint || stepInfo.lastAction);
   const blockers = Array.isArray(structured?.blockers) ? structured.blockers : [];
   const paymentOptions = Array.isArray(structured?.paymentOptions) ? structured.paymentOptions : [];
-  const stage = structured?.stage || inferCheckoutStage(summary, status, taskData);
+  const stage = structured?.stage || inferCheckoutStage(`${summary || ''} ${stepInfo.checkpoint || ''}`, status, taskData);
 
   return {
     status,
@@ -100,6 +158,9 @@ function extractTaskSnapshot(statusBody, taskBody) {
     blockers,
     paymentOptions,
     requiresUserInput: structured?.requiresUserInput === true,
+    stepCount: stepInfo.stepCount,
+    lastAction: stepInfo.lastAction,
+    screenshotUrl: stepInfo.screenshotUrl,
     rawStatus: statusData,
     rawTask: taskData,
   };

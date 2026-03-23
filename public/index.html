@@ -205,6 +205,9 @@
     let currentBuyIndex = null;
     let currentBuyTaskId = null;
     let currentBuyPollTimer = null;
+    let currentBuyCheckpointHistory = [];
+    let currentBuyLatestStepCount = -1;
+    let currentBuyTerminalSeen = false;
 
     function formatPrice(price) {
       if (!price) return '—';
@@ -369,6 +372,9 @@
       const item = currentData?.results?.results?.[index];
       currentBuyIndex = index;
       currentBuyTaskId = null;
+      currentBuyCheckpointHistory = [];
+      currentBuyLatestStepCount = -1;
+      currentBuyTerminalSeen = false;
       if (currentBuyPollTimer) clearTimeout(currentBuyPollTimer);
       if (item) {
         document.getElementById('buyItemDetails').innerHTML = 
@@ -450,6 +456,44 @@
       }
     }
 
+    function renderBuyStatus(data) {
+      const parts = [`Status: ${data.status || 'UNKNOWN'}`];
+      if (data.stage) parts.push(`Stage: ${data.stage}`);
+      if (data.stepCount != null) parts.push(`Steps: ${data.stepCount}`);
+      if (data.pageUrl) parts.push(`Page: ${data.pageUrl}`);
+      if (data.summary) parts.push(`Summary: ${data.summary}`);
+      if (data.lastAction) parts.push(`Last action: ${data.lastAction}`);
+      if (Array.isArray(data.paymentOptions) && data.paymentOptions.length > 0) {
+        parts.push(`Payment options: ${data.paymentOptions.join(', ')}`);
+      }
+      if (Array.isArray(data.blockers) && data.blockers.length > 0) {
+        parts.push(`Blockers: ${data.blockers.join(', ')}`);
+      }
+      if (data.requiresUserInput) {
+        parts.push('User input required before checkout can continue.');
+      }
+      if (data.screenshotUrl) {
+        parts.push(`<a href="${data.screenshotUrl}" target="_blank" rel="noopener">Latest screenshot ↗</a>`);
+      }
+
+      const checkpointKey = [data.status, data.stage, data.stepCount, data.summary, data.pageUrl].join('|');
+      if (checkpointKey && !currentBuyCheckpointHistory.some(entry => entry.key === checkpointKey)) {
+        currentBuyCheckpointHistory.push({
+          key: checkpointKey,
+          label: `${data.status || 'UNKNOWN'}${data.stage ? ` / ${data.stage}` : ''}`,
+          detail: data.summary || data.lastAction || data.pageUrl || 'Checkpoint recorded',
+        });
+      }
+
+      const historyHtml = currentBuyCheckpointHistory.length > 0
+        ? `<div style="margin-top:12px"><strong>Checkpoints</strong><ol style="margin:8px 0 0 18px;padding:0;">${
+            currentBuyCheckpointHistory.map(entry => `<li>${entry.label}: ${entry.detail}</li>`).join('')
+          }</ol></div>`
+        : '';
+
+      document.getElementById('buyStatus').innerHTML = `${parts.join('<br>')}${historyHtml}`;
+    }
+
     async function pollBuyTask(taskId) {
       try {
         const res = await fetch(`/api/buy/${taskId}`);
@@ -459,22 +503,24 @@
           return;
         }
 
-        const parts = [`Status: ${data.status || 'UNKNOWN'}`];
-        if (data.stage) parts.push(`Stage: ${data.stage}`);
-        if (data.pageUrl) parts.push(`Page: ${data.pageUrl}`);
-        if (data.summary) parts.push(`Summary: ${data.summary}`);
-        if (Array.isArray(data.paymentOptions) && data.paymentOptions.length > 0) {
-          parts.push(`Payment options: ${data.paymentOptions.join(', ')}`);
-        }
-        if (Array.isArray(data.blockers) && data.blockers.length > 0) {
-          parts.push(`Blockers: ${data.blockers.join(', ')}`);
-        }
-        if (data.requiresUserInput) {
-          parts.push('User input required before checkout can continue.');
-        }
-        document.getElementById('buyStatus').innerHTML = parts.join('<br>');
+        const stepCount = Number(data.stepCount ?? -1);
+        const incomingTerminal = isTerminalBuyStatus(data.status);
 
-        if (!isTerminalBuyStatus(data.status)) {
+        if (currentBuyTerminalSeen && !incomingTerminal) {
+          return;
+        }
+        if (stepCount >= 0 && stepCount < currentBuyLatestStepCount && !incomingTerminal) {
+          return;
+        }
+
+        currentBuyLatestStepCount = Math.max(currentBuyLatestStepCount, stepCount);
+        if (incomingTerminal) {
+          currentBuyTerminalSeen = true;
+        }
+
+        renderBuyStatus(data);
+
+        if (!incomingTerminal) {
           currentBuyPollTimer = setTimeout(() => pollBuyTask(taskId), 3000);
         }
       } catch (err) {
