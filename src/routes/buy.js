@@ -26,6 +26,17 @@ function truncateText(value, maxLength = 500) {
   return text.length <= maxLength ? text : `${text.slice(0, maxLength - 3)}...`;
 }
 
+function extractLocusFundingBlock(body) {
+  const message = String(body?.message || '');
+  const details = body?.details || body?.data?.details || {};
+  if (!/insufficient usdc balance/i.test(message)) return null;
+
+  return {
+    walletBalance: details.walletBalance ?? null,
+    proposedAmount: details.proposedAmount ?? null,
+  };
+}
+
 function buildCheckoutTask({ url, title, price, marketplace, paymentMethod }) {
   const priceText = stringifyMaybe(price) || 'unknown price';
   const paymentLabel = paymentMethod === 'usdc' ? 'USDC' : 'card';
@@ -36,11 +47,32 @@ function buildCheckoutTask({ url, title, price, marketplace, paymentMethod }) {
     'If it does not match, stop and explain the mismatch.',
     'If there are required product options like size or color and they are not obvious, stop and report that user input is required.',
     'Add exactly one item to cart if possible.',
-    'Proceed through checkout until you reach the payment page, payment method selection, or a login/account wall.',
+    'Prefer guest checkout if the merchant offers it.',
+    'Proceed through checkout until you reach the payment page, payment method selection, shipping step, or a login/account wall.',
     `Prefer the ${paymentLabel} path if the merchant offers a choice, but do not enter or submit payment credentials.`,
     'Do not place the order.',
-    'Return a concise summary of the furthest checkout step reached, the current page URL, and any blockers such as login, captcha, stock, or missing shipping details.'
+    'Return JSON only in this shape: {"stage":"product|cart|shipping|payment|login_required|blocked|mismatch|input_required","pageUrl":"current url","summary":"short status summary","blockers":["..."],"paymentOptions":["..."],"requiresUserInput":true|false}.'
   ].join(' ');
+}
+
+function parseJsonSafely(value) {
+  if (!value || typeof value !== 'string') return null;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+}
+
+function inferCheckoutStage(summary, status, taskData = {}) {
+  const text = `${summary || ''} ${status || ''} ${taskData.currentUrl || ''}`.toLowerCase();
+  if (/\bmismatch\b/.test(text)) return 'mismatch';
+  if (/\b(payment|card number|cvv|paypal|apple pay|google pay)\b/.test(text)) return 'payment';
+  if (/\b(shipping|delivery address|billing address)\b/.test(text)) return 'shipping';
+  if (/\b(cart|basket|bag)\b/.test(text)) return 'cart';
+  if (/\b(login|sign in|account wall)\b/.test(text)) return 'login_required';
+  if (/\b(input required|select size|select colour|select color|variant)\b/.test(text)) return 'input_required';
+  return 'product';
 }
 
 function extractTaskSnapshot(statusBody, taskBody) {
@@ -48,19 +80,26 @@ function extractTaskSnapshot(statusBody, taskBody) {
   const taskData = taskBody?.data || {};
   const status = statusData.status || taskData.status || 'UNKNOWN';
   const pageUrl = taskData.currentUrl || taskData.url || taskData.pageUrl || taskData.finalUrl || null;
-  const summary = truncateText(
-    taskData.summary
-      || taskData.output
-      || taskData.result
-      || taskData.message
-      || statusData.message
-      || statusData.summary
-  );
+  const rawSummary = taskData.summary
+    || taskData.output
+    || taskData.result
+    || taskData.message
+    || statusData.message
+    || statusData.summary;
+  const structured = parseJsonSafely(rawSummary) || parseJsonSafely(taskData.output) || parseJsonSafely(taskData.result);
+  const summary = truncateText(structured?.summary || rawSummary);
+  const blockers = Array.isArray(structured?.blockers) ? structured.blockers : [];
+  const paymentOptions = Array.isArray(structured?.paymentOptions) ? structured.paymentOptions : [];
+  const stage = structured?.stage || inferCheckoutStage(summary, status, taskData);
 
   return {
     status,
+    stage,
     pageUrl,
     summary,
+    blockers,
+    paymentOptions,
+    requiresUserInput: structured?.requiresUserInput === true,
     rawStatus: statusData,
     rawTask: taskData,
   };
@@ -92,6 +131,17 @@ router.post('/buy', async (req, res) => {
     const response = await browserUseRunTask(task, { maxSteps: 60 });
     const approvalUrl = extractLocusApproval(response.body);
     const taskId = extractBrowserTaskId(response.body);
+    const fundingBlock = extractLocusFundingBlock(response.body);
+
+    if (fundingBlock) {
+      return res.status(402).json({
+        error: 'locus_insufficient_balance',
+        message: 'Locus checkout automation is configured, but the wallet has no spendable USDC yet.',
+        walletBalance: fundingBlock.walletBalance,
+        requiredAmount: fundingBlock.proposedAmount,
+        nextStep: 'Fund the Locus wallet or wait for beta credits approval, then retry checkout automation.',
+      });
+    }
 
     if (!response.ok && !taskId && !approvalUrl) {
       return res.status(response.status || 500).json({

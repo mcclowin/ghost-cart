@@ -415,7 +415,17 @@
 
         const data = await res.json();
         if (data.error) {
-          document.getElementById('buyStatus').textContent = `Error: ${data.message || data.error}`;
+          if (data.error === 'locus_insufficient_balance') {
+            const parts = [
+              data.message || 'Locus wallet is not funded yet.',
+              data.requiredAmount ? `Required for this task: ${data.requiredAmount} USDC` : null,
+              data.walletBalance != null ? `Current wallet balance: ${data.walletBalance} USDC` : null,
+              data.nextStep || 'Request beta credits or fund the wallet, then try again.',
+            ].filter(Boolean);
+            document.getElementById('buyStatus').innerHTML = parts.join('<br>');
+          } else {
+            document.getElementById('buyStatus').textContent = `Error: ${data.message || data.error}`;
+          }
           return;
         }
 
@@ -450,8 +460,18 @@
         }
 
         const parts = [`Status: ${data.status || 'UNKNOWN'}`];
+        if (data.stage) parts.push(`Stage: ${data.stage}`);
         if (data.pageUrl) parts.push(`Page: ${data.pageUrl}`);
         if (data.summary) parts.push(`Summary: ${data.summary}`);
+        if (Array.isArray(data.paymentOptions) && data.paymentOptions.length > 0) {
+          parts.push(`Payment options: ${data.paymentOptions.join(', ')}`);
+        }
+        if (Array.isArray(data.blockers) && data.blockers.length > 0) {
+          parts.push(`Blockers: ${data.blockers.join(', ')}`);
+        }
+        if (data.requiresUserInput) {
+          parts.push('User input required before checkout can continue.');
+        }
         document.getElementById('buyStatus').innerHTML = parts.join('<br>');
 
         if (!isTerminalBuyStatus(data.status)) {

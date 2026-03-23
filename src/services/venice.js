@@ -35,6 +35,14 @@ const TRUSTED_MARKETPLACE_SCORES = {
   'Uniqlo': 84,
   'Zara': 79,
 };
+const STYLE_SYNONYMS = {
+  puffy: ['puffy', 'puffer', 'padded', 'down', 'insulated', 'bubble', 'quilted'],
+  puffer: ['puffy', 'puffer', 'padded', 'down', 'insulated', 'bubble', 'quilted'],
+  padded: ['puffy', 'puffer', 'padded', 'down', 'insulated', 'bubble', 'quilted'],
+  hooded: ['hooded', 'hood', 'parka'],
+  quilted: ['quilted', 'padded', 'insulated'],
+  insulated: ['insulated', 'padded', 'down', 'puffer'],
+};
 
 // Try to load Codex auth token as fallback
 function getCodexToken() {
@@ -129,6 +137,7 @@ function isGenericPage(result, matchRatio) {
 }
 
 function buildRankingContext(query, parsed = {}) {
+  const style = parsed.style ? String(parsed.style).toLowerCase() : null;
   return {
     searchTokens: uniqueTokens([
       query,
@@ -143,7 +152,9 @@ function buildRankingContext(query, parsed = {}) {
     brand: parsed.brand ? String(parsed.brand).toLowerCase() : null,
     model: parsed.model ? String(parsed.model).toLowerCase() : null,
     color: parsed.color ? String(parsed.color).toLowerCase() : null,
+    style,
     styleTokens: uniqueTokens([parsed.style, ...(parsed.requirements || [])]),
+    styleTerms: style ? (STYLE_SYNONYMS[style] || [style]) : [],
     productTypeTokens: uniqueTokens([parsed.productType]),
   };
 }
@@ -160,16 +171,35 @@ function scoreResult(result, priceStats, context) {
   const titleMatchRatio = context.searchTokens.length > 0 ? titleMatchedTokens.length / context.searchTokens.length : 0.5;
   const priceAmount = normalisePrice(result.price);
   const hasPrice = priceAmount != null;
-  const genericPage = isGenericPage(result, matchRatio);
+  const validated = result.validated === true;
+  const validationSummary = result.validationSummary || {};
+  const genericPage = validated ? false : isGenericPage(result, matchRatio);
   const warnings = [];
+  const hasColor = context.color
+    ? (validationSummary.hasColor ?? haystack.includes(context.color))
+    : true;
+  const hasStyle = context.styleTerms.length > 0
+    ? (validationSummary.hasStyle ?? context.styleTerms.some(term => haystack.includes(term)))
+    : true;
+  const hasBrand = context.brand ? haystack.includes(context.brand) : true;
+  const hasModel = context.model ? haystack.includes(context.model) : true;
+  const hasProductType = context.productTypeTokens.length > 0
+    ? (validationSummary.hasProductType ?? context.productTypeTokens.some(token => haystack.includes(token)))
+    : true;
 
   let relevanceScore = 25 + (matchRatio * 45) + (titleMatchRatio * 25);
-  if (context.brand && haystack.includes(context.brand)) relevanceScore += 8;
-  if (context.model && haystack.includes(context.model)) relevanceScore += 10;
-  if (context.color && haystack.includes(context.color)) relevanceScore += 6;
-  if (context.productTypeTokens.some(token => haystack.includes(token))) relevanceScore += 6;
-  if (context.styleTokens.some(token => haystack.includes(token))) relevanceScore += 5;
+  if (hasBrand) relevanceScore += 8;
+  else if (context.brand) relevanceScore -= 20;
+  if (hasModel) relevanceScore += 10;
+  else if (context.model) relevanceScore -= 24;
+  if (hasColor) relevanceScore += 14;
+  else if (context.color) relevanceScore -= 28;
+  if (hasProductType) relevanceScore += 6;
+  else if (context.productTypeTokens.length > 0) relevanceScore -= 10;
+  if (hasStyle) relevanceScore += 10;
+  else if (context.styleTerms.length > 0) relevanceScore -= 20;
   if (genericPage) relevanceScore -= 35;
+  if (validated) relevanceScore += 10;
   if (!hasPrice) relevanceScore -= 20;
   relevanceScore = clamp(relevanceScore);
 
@@ -209,9 +239,13 @@ function scoreResult(result, priceStats, context) {
 
   trustScore = clamp(trustScore);
 
-  const isActualProduct = hasPrice && !genericPage && relevanceScore >= 35;
+  const isActualProduct = hasPrice && !genericPage && relevanceScore >= 35 && hasColor && hasStyle && hasBrand && hasModel && hasProductType;
   if (!hasPrice) warnings.push('No visible price');
   if (genericPage) warnings.push('Looks like a category/search page');
+  if (context.color && !hasColor) warnings.push(`Missing requested color: ${context.color}`);
+  if (context.style && !hasStyle) warnings.push(`Missing requested style: ${context.style}`);
+  if (context.brand && !hasBrand) warnings.push(`Missing requested brand: ${context.brand}`);
+  if (context.model && !hasModel) warnings.push(`Missing requested model: ${context.model}`);
 
   const overallScore = clamp((relevanceScore * 0.5) + (valueScore * 0.3) + (trustScore * 0.2));
 

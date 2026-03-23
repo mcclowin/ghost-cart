@@ -1,7 +1,8 @@
 import { Router } from 'express';
 import { parseQuery, rankResults } from '../services/venice.js';
 import { searchGoogleShopping } from '../services/search-serp.js';
-import { resolveShoppingResults } from '../services/search-web.js';
+import { resolveShoppingResults, validateResolvedResults } from '../services/search-web.js';
+import { hasFirecrawlKey } from '../services/firecrawl.js';
 import { randomUUID } from 'crypto';
 
 const router = Router();
@@ -15,7 +16,8 @@ const searchResults = new Map();
  * 2. SerpAPI Google Shopping → product candidates (images, prices, ratings)
  * 3. Split results: direct store URLs vs Google redirects
  * 4. Tavily resolves ONLY the Google redirect URLs (not all)
- * 5. Heuristic ranking of all results
+ * 5. Firecrawl validates likely product pages when configured
+ * 6. Heuristic ranking of surviving results
  */
 router.post('/search', async (req, res) => {
   try {
@@ -67,10 +69,24 @@ router.post('/search', async (req, res) => {
       return true;
     });
 
-    // ── Step 5: Rank ──
-    console.log(`🏆 Step 4: Ranking ${deduped.length} results...`);
-    const ranked = deduped.length > 0
-      ? await rankResults(query, deduped, parsed)
+    // ── Step 5: Validate likely product pages via Firecrawl (optional) ──
+    let validatedResults = deduped;
+    let validatedCount = null;
+    if (deduped.length > 0 && hasFirecrawlKey()) {
+      console.log('🧾 Step 4: Validating product pages via Firecrawl...');
+      validatedResults = await validateResolvedResults(deduped, parsed, Math.min(deduped.length, 8));
+      validatedCount = validatedResults.length;
+      console.log(`   → Validated: ${validatedCount}`);
+      if (validatedCount === 0) {
+        console.log('   ⚠️ Validation returned 0 results — falling back to unvalidated candidates');
+        validatedResults = deduped;
+      }
+    }
+
+    // ── Step 6: Rank ──
+    console.log(`🏆 Step 5: Ranking ${validatedResults.length} results...`);
+    const ranked = validatedResults.length > 0
+      ? await rankResults(query, validatedResults, parsed)
       : { results: [], bestPick: 'No results found', privacyNote: '' };
 
     const duration = Date.now() - startTime;
@@ -84,13 +100,14 @@ router.post('/search', async (req, res) => {
 
     res.json({
       searchId, query,
-      resultCount: deduped.length,
+      resultCount: validatedResults.length,
       results: ranked,
       duration,
       sources: {
         googleShopping: shoppingResults.length,
         directUrls: directResults.length,
         resolvedUrls: resolvedResults.length,
+        validatedUrls: validatedCount,
       },
       privacy: 'All queries processed with zero data retention',
     });

@@ -2,7 +2,7 @@
  * Web search via Tavily + Firecrawl for stores without APIs
  * Used for: Amazon, AliExpress, Selfridges, Zara, etc.
  */
-import { firecrawlScrape } from './locus.js';
+import { firecrawlScrape } from './firecrawl.js';
 
 const MARKETPLACE_DOMAINS = {
   'ASOS': ['asos.com'],
@@ -63,6 +63,14 @@ const COLOR_TOKENS = new Set([
   'pink', 'red', 'burgundy', 'brown', 'tan', 'beige', 'cream', 'orange',
   'purple', 'lilac', 'silver', 'metallic',
 ]);
+const STYLE_SYNONYMS = {
+  puffy: ['puffy', 'puffer', 'padded', 'down', 'insulated', 'bubble', 'quilted'],
+  puffer: ['puffy', 'puffer', 'padded', 'down', 'insulated', 'bubble', 'quilted'],
+  padded: ['puffy', 'puffer', 'padded', 'down', 'insulated', 'bubble', 'quilted'],
+  hooded: ['hooded', 'hood', 'parka'],
+  quilted: ['quilted', 'padded', 'insulated'],
+  insulated: ['insulated', 'padded', 'down', 'puffer'],
+};
 
 /**
  * Search via Tavily API (finds product pages across the web)
@@ -342,12 +350,18 @@ export async function resolveShoppingResults(shoppingResults, limit = 12, option
 }
 
 /**
- * Scrape a product page via Firecrawl (through Locus wrapped API)
+ * Scrape a product page via the direct Firecrawl API
  */
 export async function scrapeProductPage(url) {
   try {
     const response = await firecrawlScrape(url);
-    return response.body.success ? response.body.data : null;
+    if (!response.ok) {
+      console.error('Firecrawl scrape failed:', response.body?.message || response.body?.error || response.status);
+      return null;
+    }
+
+    const payload = response.body?.data || response.body;
+    return payload?.data || payload || null;
   } catch (error) {
     console.error('Firecrawl scrape error:', error.message);
     return null;
@@ -380,20 +394,87 @@ function selectValidationExcerpt(markdown) {
   return text.slice(0, 280) || null;
 }
 
-export async function validateResolvedResults(results, limit = MAX_VALIDATION_CANDIDATES) {
+function buildValidationContext(parsed = {}) {
+  const color = String(parsed.color || '').trim().toLowerCase() || null;
+  const style = String(parsed.style || '').trim().toLowerCase() || null;
+  const brand = String(parsed.brand || '').trim().toLowerCase() || null;
+  const model = String(parsed.model || '').trim().toLowerCase() || null;
+  const productType = String(parsed.productType || '').trim().toLowerCase() || null;
+  const styleTerms = style
+    ? (STYLE_SYNONYMS[style] || [style]).filter(Boolean)
+    : [];
+
+  return {
+    color,
+    style,
+    styleTerms,
+    brand,
+    model,
+    productType,
+  };
+}
+
+function textIncludesAny(text, values = []) {
+  return values.some(value => value && text.includes(value));
+}
+
+function assessValidationMatch(item, markdown, context) {
+  const normalizedText = String(markdown || '').toLowerCase();
+  const titleMatch = overlapRatio(item.title, normalizedText);
+  const priceText = String(item.price?.display || '').toLowerCase();
+  const hasPrice = priceText ? normalizedText.includes(priceText) : true;
+  const categoryPage = looksLikeCategoryPage(normalizedText);
+  const warnings = [];
+
+  const hasColor = context.color ? normalizedText.includes(context.color) : true;
+  const hasStyle = context.styleTerms.length > 0 ? textIncludesAny(normalizedText, context.styleTerms) : true;
+  const hasBrand = context.brand ? normalizedText.includes(context.brand) : true;
+  const hasModel = context.model ? normalizedText.includes(context.model) : true;
+  const hasProductType = context.productType ? normalizedText.includes(context.productType) : true;
+
+  if (context.color && !hasColor) warnings.push(`Missing required color: ${context.color}`);
+  if (context.styleTerms.length > 0 && !hasStyle) warnings.push(`Missing required style: ${context.style}`);
+  if (context.brand && !hasBrand) warnings.push(`Missing expected brand: ${context.brand}`);
+  if (context.model && !hasModel) warnings.push(`Missing expected model: ${context.model}`);
+  if (context.productType && !hasProductType) warnings.push(`Missing product type: ${context.productType}`);
+  if (!hasPrice) warnings.push('Missing expected price');
+  if (categoryPage) warnings.push('Looks like a category/search page');
+
+  const isValid = (
+    titleMatch >= 0.3 &&
+    hasPrice &&
+    !categoryPage &&
+    hasColor &&
+    hasStyle &&
+    hasBrand &&
+    hasModel &&
+    hasProductType
+  );
+
+  return {
+    isValid,
+    titleMatch,
+    hasPrice,
+    hasColor,
+    hasStyle,
+    hasBrand,
+    hasModel,
+    hasProductType,
+    warnings,
+  };
+}
+
+export async function validateResolvedResults(results, parsed = {}, limit = MAX_VALIDATION_CANDIDATES) {
   const candidates = results.slice(0, limit);
+  const context = buildValidationContext(parsed);
 
   const validated = await Promise.all(candidates.map(async (item) => {
     const page = await scrapeProductPage(item.url);
     const markdown = page?.markdown || page?.content || '';
     if (!markdown) return null;
 
-    const titleMatch = overlapRatio(item.title, markdown);
-    const priceText = item.price?.display || '';
-    const hasPrice = priceText ? markdown.includes(priceText) : true;
-    const categoryPage = looksLikeCategoryPage(markdown);
-
-    if (titleMatch < 0.3 || categoryPage || !hasPrice) {
+    const assessment = assessValidationMatch(item, markdown, context);
+    if (!assessment.isValid) {
       return null;
     }
 
@@ -402,6 +483,12 @@ export async function validateResolvedResults(results, limit = MAX_VALIDATION_CA
       snippet: selectValidationExcerpt(markdown) || item.snippet,
       validated: true,
       validationSource: 'firecrawl',
+      validationSummary: {
+        titleMatch: Math.round(assessment.titleMatch * 100),
+        hasColor: assessment.hasColor,
+        hasStyle: assessment.hasStyle,
+        hasProductType: assessment.hasProductType,
+      },
     };
   }));
 
