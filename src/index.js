@@ -10,6 +10,7 @@ import { buyRouter } from './routes/buy.js';
 import { webhookRouter } from './routes/webhook.js';
 import { paymentsRouter } from './routes/payments.js';
 import { buildAgentCard } from './services/erc8004.js';
+import { apiKeyAuth } from './middleware/auth.js';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -50,6 +51,9 @@ app.use(express.json());
 
 // Serve static frontend
 app.use(express.static('public'));
+
+// API key auth for all /api/* routes (skipped when GHOSTCART_API_KEY is unset)
+app.use('/api', apiKeyAuth);
 
 // API Routes
 app.use('/api/search', searchLimiter);

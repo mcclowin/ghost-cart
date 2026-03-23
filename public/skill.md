@@ -27,6 +27,33 @@ GhostCart currently does **not** finalize merchant checkout automatically. The b
 - Stores see GhostCart interacting with the merchant surface, not the user's search session.
 - ERC-8004 metadata can be exposed through the agent card endpoint.
 
+## Authentication
+
+All `/api/*` endpoints require a Bearer token when the server has `GHOSTCART_API_KEY` configured.
+
+Include the API key in the `Authorization` header:
+
+```
+Authorization: Bearer gc_your_api_key_here
+```
+
+If the server has no `GHOSTCART_API_KEY` set, authentication is disabled (development mode) and all requests pass through without a token.
+
+**Error responses:**
+
+| Status | Body |
+|--------|------|
+| `401`  | `{"error": "unauthorized", "message": "API key required. Pass Authorization: Bearer <key>"}` |
+| `403`  | `{"error": "forbidden", "message": "Invalid API key"}` |
+
+Public endpoints that do **not** require authentication:
+
+- `GET /health`
+- `GET /.well-known/agent-card.json`
+- `GET /skill.md`
+- `POST /webhook/*`
+- `GET /` (frontend)
+
 ## Base URL
 
 Use the host serving this file as the API base.
