@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>How GhostCart Works</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #0a0a0a;
+      color: #e0e0e0;
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      line-height: 1.7;
+      padding: 40px 20px;
+    }
+    .container {
+      max-width: 680px;
+      margin: 0 auto;
+    }
+    h1 {
+      font-size: 1.8em;
+      margin-bottom: 8px;
+      background: linear-gradient(135deg, #7b68ee, #00d2ff);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    .subtitle {
+      color: #888;
+      font-size: 0.95em;
+      margin-bottom: 36px;
+    }
+    h2 {
+      font-size: 1.2em;
+      color: #7b68ee;
+      margin-top: 32px;
+      margin-bottom: 12px;
+    }
+    p, li {
+      color: #ccc;
+      font-size: 0.95em;
+      margin-bottom: 12px;
+    }
+    ul {
+      padding-left: 20px;
+      margin-bottom: 16px;
+    }
+    li { margin-bottom: 6px; }
+    .step {
+      background: #141414;
+      border: 1px solid #222;
+      border-radius: 12px;
+      padding: 20px;
+      margin-bottom: 16px;
+    }
+    .step-num {
+      display: inline-block;
+      background: #7b68ee;
+      color: #fff;
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      text-align: center;
+      line-height: 28px;
+      font-size: 0.85em;
+      font-weight: bold;
+      margin-right: 10px;
+    }
+    .step h3 {
+      display: inline;
+      font-size: 1.05em;
+      color: #fff;
+    }
+    .step p { margin-top: 10px; }
+    .limitation {
+      background: #1a1400;
+      border: 1px solid #3a3000;
+      border-radius: 12px;
+      padding: 20px;
+      margin-top: 24px;
+    }
+    .limitation h3 {
+      color: #f0c040;
+      font-size: 1em;
+      margin-bottom: 8px;
+    }
+    .privacy {
+      background: #001a14;
+      border: 1px solid #003a2a;
+      border-radius: 12px;
+      padding: 20px;
+      margin-top: 24px;
+    }
+    .privacy h3 {
+      color: #00d2ff;
+      font-size: 1em;
+      margin-bottom: 8px;
+    }
+    a {
+      color: #7b68ee;
+      text-decoration: none;
+    }
+    a:hover { text-decoration: underline; }
+    .back {
+      display: inline-block;
+      margin-top: 36px;
+      padding: 10px 20px;
+      background: #1a1a2e;
+      border: 1px solid #333;
+      border-radius: 8px;
+      color: #7b68ee;
+      font-size: 0.9em;
+    }
+    .back:hover { background: #222; }
+    code {
+      background: #1a1a2e;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 0.9em;
+      color: #7b68ee;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>👻 How GhostCart Works</h1>
+    <p class="subtitle">Privacy-first shopping in 5 steps</p>
+
+    <div class="step">
+      <span class="step-num">1</span>
+      <h3>Search</h3>
+      <p>Describe what you want in plain language — like <code>USB-C cable 2m braided under £10</code> or <code>replacement Bosch dishwasher spray arm</code>. GhostCart searches across multiple marketplaces simultaneously.</p>
+    </div>
+
+    <div class="step">
+      <span class="step-num">2</span>
+      <h3>Compare</h3>
+      <p>Results are ranked by relevance, value, and seller trust. Each product shows a score breakdown, price, marketplace, and any warnings. The best pick is highlighted with a recommendation.</p>
+    </div>
+
+    <div class="step">
+      <span class="step-num">3</span>
+      <h3>Choose how to buy</h3>
+      <p>You can either click through to buy directly from the store, or use GhostCart's buy flow. The GhostCart flow adds a privacy layer — the merchant sees GhostCart, not you.</p>
+    </div>
+
+    <div class="step">
+      <span class="step-num">4</span>
+      <h3>Pay GhostCart</h3>
+      <p>If you use the GhostCart flow, pay through <strong>Stripe</strong> (card) or <strong>Locus</strong> (USDC on Base). After payment confirms, GhostCart starts preparing your purchase in the background.</p>
+    </div>
+
+    <div class="step">
+      <span class="step-num">5</span>
+      <h3>Checkout preparation</h3>
+      <p>GhostCart opens the merchant site, verifies the product, adds it to cart, and moves through checkout — all automated in the background. You can track progress in real time.</p>
+    </div>
+
+    <div class="limitation">
+      <h3>⚠️ Current limitation</h3>
+      <p>GhostCart currently prepares the checkout but <strong>does not place the final order</strong>. It stops before entering merchant payment details. This is a safety boundary while we build out the full autonomous purchasing pipeline.</p>
+    </div>
+
+    <div class="privacy">
+      <h3>🔒 Privacy model</h3>
+      <p>Your search queries are processed through <strong>Venice AI</strong> with zero data retention — no logs, no profiling. When GhostCart interacts with merchants, they see GhostCart's identity, not yours. Your shopping intent stays private.</p>
+    </div>
+
+    <h2>For agents & developers</h2>
+    <p>GhostCart exposes a full API for other AI agents. Read the <a href="/skill.md">skill file</a> for the complete API contract, or check the <a href="/.well-known/agent-card.json">agent card</a> for discovery metadata.</p>
+
+    <a href="/" class="back">← Back to GhostCart</a>
+  </div>
+</body>
+</html>
