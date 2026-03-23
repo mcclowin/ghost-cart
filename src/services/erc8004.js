@@ -38,7 +38,7 @@ export function buildAgentCard(req) {
   const baseUrl = getPublicBaseUrl(req);
   const skillUrl = baseUrl ? `${baseUrl}/skill.md` : null;
   const apiUrl = baseUrl ? `${baseUrl}/api` : null;
-  const imageUrl = baseUrl ? `${baseUrl}/logo.png` : 'https://github.com/mcclowin/ghost-cart/raw/main/public/logo.png';
+  const imageUrl = baseUrl ? `${baseUrl}/logo.png` : 'https://raw.githubusercontent.com/mcclowin/ghost-cart/main/docs/cover.jpg';
 
   const card = {
     type: 'https://eips.ethereum.org/EIPS/eip-8004#registration-v1',

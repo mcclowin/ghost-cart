@@ -3,6 +3,7 @@ import 'dotenv/config'; // Preload env before ESM imports evaluate dependent mod
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
+import rateLimit from 'express-rate-limit';
 import { resolve } from 'path';
 import { searchRouter } from './routes/search.js';
 import { buyRouter } from './routes/buy.js';
@@ -13,7 +14,33 @@ import { buildAgentCard } from './services/erc8004.js';
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// Rate limiting
+const globalLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 100,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many requests, please try again later.' },
+});
+
+const searchLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Search rate limit exceeded. This endpoint uses expensive API credits.' },
+});
+
+const checkoutLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Checkout rate limit exceeded, please try again later.' },
+});
+
 // Middleware
+app.use(globalLimiter);
 app.use(helmet({
   contentSecurityPolicy: false, // Disable CSP for dev — our frontend uses inline scripts
 }));
@@ -25,6 +52,8 @@ app.use(express.json());
 app.use(express.static('public'));
 
 // API Routes
+app.use('/api/search', searchLimiter);
+app.use('/api/payments/checkout', checkoutLimiter);
 app.use('/api', searchRouter);
 app.use('/api', buyRouter);
 app.use('/api', paymentsRouter);

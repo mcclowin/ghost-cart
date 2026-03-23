@@ -45,10 +45,10 @@ flowchart TD
 
 Relevant code:
 
-- [src/routes/search.js](/home/ubuntu/Dropbox/WEB/ghost-cart/src/routes/search.js)
-- [src/services/venice.js](/home/ubuntu/Dropbox/WEB/ghost-cart/src/services/venice.js)
-- [src/services/search-serp.js](/home/ubuntu/Dropbox/WEB/ghost-cart/src/services/search-serp.js)
-- [src/services/search-web.js](/home/ubuntu/Dropbox/WEB/ghost-cart/src/services/search-web.js)
+- [src/routes/search.js](src/routes/search.js)
+- [src/services/venice.js](src/services/venice.js)
+- [src/services/search-serp.js](src/services/search-serp.js)
+- [src/services/search-web.js](src/services/search-web.js)
 
 ### Payment Flow
 
@@ -60,11 +60,11 @@ Relevant code:
 
 Relevant code:
 
-- [src/routes/payments.js](/home/ubuntu/Dropbox/WEB/ghost-cart/src/routes/payments.js)
-- [src/routes/webhook.js](/home/ubuntu/Dropbox/WEB/ghost-cart/src/routes/webhook.js)
-- [src/services/stripe.js](/home/ubuntu/Dropbox/WEB/ghost-cart/src/services/stripe.js)
-- [src/services/locus.js](/home/ubuntu/Dropbox/WEB/ghost-cart/src/services/locus.js)
-- [src/services/payments-store.js](/home/ubuntu/Dropbox/WEB/ghost-cart/src/services/payments-store.js)
+- [src/routes/payments.js](src/routes/payments.js)
+- [src/routes/webhook.js](src/routes/webhook.js)
+- [src/services/stripe.js](src/services/stripe.js)
+- [src/services/locus.js](src/services/locus.js)
+- [src/services/payments-store.js](src/services/payments-store.js)
 
 ### Background Purchase Flow
 
@@ -76,8 +76,8 @@ Relevant code:
 
 Relevant code:
 
-- [src/services/purchase.js](/home/ubuntu/Dropbox/WEB/ghost-cart/src/services/purchase.js)
-- [src/routes/buy.js](/home/ubuntu/Dropbox/WEB/ghost-cart/src/routes/buy.js)
+- [src/services/purchase.js](src/services/purchase.js)
+- [src/routes/buy.js](src/routes/buy.js)
 
 ## Public Surface
 
@@ -88,7 +88,7 @@ The deployment is expected to serve:
 - `https://ghostcart.app/.well-known/agent-card.json`
 - `https://ghostcart.app/health`
 
-The skill route is defined in [src/index.js](/home/ubuntu/Dropbox/WEB/ghost-cart/src/index.js), and the agent card is built in [src/services/erc8004.js](/home/ubuntu/Dropbox/WEB/ghost-cart/src/services/erc8004.js).
+The skill route is defined in [src/index.js](src/index.js), and the agent card is built in [src/services/erc8004.js](src/services/erc8004.js).
 
 ## Trust And Identity
 
@@ -96,7 +96,7 @@ GhostCart exposes an ERC-8004-style agent card. The public URLs advertised by th
 
 Relevant code:
 
-- [src/services/erc8004.js](/home/ubuntu/Dropbox/WEB/ghost-cart/src/services/erc8004.js)
+- [src/services/erc8004.js](src/services/erc8004.js)
 
 ## Current Limitations
 

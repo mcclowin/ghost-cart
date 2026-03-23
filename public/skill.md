@@ -66,11 +66,7 @@ Response shape:
         "title": "Bosch dishwasher spray arm replacement",
         "marketplace": "eBay",
         "url": "https://...",
-        "price": {
-          "amount": 17.99,
-          "currency": "GBP",
-          "display": "GBP 17.99"
-        },
+        "price": "£17.99",
         "image": "https://...",
         "relevanceScore": 92,
         "valueScore": 81,
@@ -133,11 +129,7 @@ For a purchase-linked payment session that should start background checkout afte
     "purchaseIntent": {
       "url": "https://merchant.example/product/123",
       "title": "Bosch dishwasher spray arm",
-      "price": {
-        "amount": 17.99,
-        "currency": "GBP",
-        "display": "GBP 17.99"
-      },
+      "price": "£17.99",
       "marketplace": "eBay",
       "paymentMethod": "usdc"
     }
@@ -228,11 +220,7 @@ Request:
 {
   "url": "https://merchant.example/product/123",
   "title": "Bosch dishwasher spray arm",
-  "price": {
-    "amount": 17.99,
-    "currency": "GBP",
-    "display": "GBP 17.99"
-  },
+  "price": "£17.99",
   "marketplace": "eBay",
   "paymentMethod": "card"
 }
