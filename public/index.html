@@ -155,6 +155,10 @@
       background: #222; color: #fff; cursor: pointer; font-size: 1em;
     }
     .payment-btn:hover { border-color: #7b68ee; }
+    .buy-status {
+      margin-top: 14px; font-size: 0.85em; color: #aaa; line-height: 1.5;
+    }
+    .buy-status a { color: #7b68ee; }
   </style>
 </head>
 <body>
@@ -192,11 +196,15 @@
         <button class="payment-btn" style="border-color:#2775ca" id="btnUSDC">🔵 Pay with USDC (Base)</button>
         <button class="payment-btn" id="btnCancel">Cancel</button>
       </div>
+      <div id="buyStatus" class="buy-status"></div>
     </div>
   </div>
 
   <script>
     let currentData = null;
+    let currentBuyIndex = null;
+    let currentBuyTaskId = null;
+    let currentBuyPollTimer = null;
 
     function formatPrice(price) {
       if (!price) return '—';
@@ -211,12 +219,8 @@
     document.getElementById('searchInput').addEventListener('keydown', e => {
       if (e.key === 'Enter') doSearch();
     });
-    document.getElementById('btnCard').addEventListener('click', () => {
-      alert('Stripe Checkout coming soon'); closeModal();
-    });
-    document.getElementById('btnUSDC').addEventListener('click', () => {
-      alert('USDC payment via Locus coming soon'); closeModal();
-    });
+    document.getElementById('btnCard').addEventListener('click', () => startGhostCartBuy('card'));
+    document.getElementById('btnUSDC').addEventListener('click', () => startGhostCartBuy('usdc'));
     document.getElementById('btnCancel').addEventListener('click', closeModal);
 
     async function doSearch() {
@@ -350,6 +354,7 @@
       const parts = [];
       if (sources.googleShopping) parts.push(`Google Shopping: ${sources.googleShopping}`);
       if (sources.resolvedUrls != null) parts.push(`Resolved URLs: ${sources.resolvedUrls}`);
+      if (sources.validatedUrls != null) parts.push(`Validated URLs: ${sources.validatedUrls}`);
       if (data.duration) parts.push(`${(data.duration / 1000).toFixed(1)}s`);
 
       document.getElementById('metaBar').innerHTML = `
@@ -362,14 +367,103 @@
 
     function buyItem(index) {
       const item = currentData?.results?.results?.[index];
+      currentBuyIndex = index;
+      currentBuyTaskId = null;
+      if (currentBuyPollTimer) clearTimeout(currentBuyPollTimer);
       if (item) {
         document.getElementById('buyItemDetails').innerHTML = 
           `<strong>${item.title}</strong><br>${item.price} from ${item.marketplace}`;
       }
+      document.getElementById('buyStatus').innerHTML = 'GhostCart will try to add this item to cart and reach the checkout page without submitting payment.';
       document.getElementById('paymentModal').classList.add('active');
     }
 
+    function setBuyButtonsDisabled(disabled) {
+      document.getElementById('btnCard').disabled = disabled;
+      document.getElementById('btnUSDC').disabled = disabled;
+    }
+
+    function isTerminalBuyStatus(status) {
+      const value = String(status || '').toUpperCase();
+      return value.includes('COMPLETE')
+        || value.includes('SUCCESS')
+        || value.includes('FAILED')
+        || value.includes('ERROR')
+        || value.includes('CANCEL')
+        || value.includes('STOP');
+    }
+
+    async function startGhostCartBuy(paymentMethod) {
+      const item = currentData?.results?.results?.[currentBuyIndex];
+      if (!item) return;
+
+      setBuyButtonsDisabled(true);
+      document.getElementById('buyStatus').innerHTML = 'Starting GhostCart checkout automation...';
+
+      try {
+        const res = await fetch('/api/buy', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            url: item.url,
+            title: item.title,
+            price: item.price,
+            marketplace: item.marketplace,
+            paymentMethod,
+          }),
+        });
+
+        const data = await res.json();
+        if (data.error) {
+          document.getElementById('buyStatus').textContent = `Error: ${data.message || data.error}`;
+          return;
+        }
+
+        currentBuyTaskId = data.taskId || null;
+
+        if (data.approvalUrl) {
+          document.getElementById('buyStatus').innerHTML = `
+            ${data.message || 'Approval required before checkout automation can start.'}<br>
+            <a href="${data.approvalUrl}" target="_blank" rel="noopener">Approve in Locus ↗</a>
+          `;
+        } else {
+          document.getElementById('buyStatus').textContent = data.message || 'Checkout automation started.';
+        }
+
+        if (currentBuyTaskId) {
+          pollBuyTask(currentBuyTaskId);
+        }
+      } catch (err) {
+        document.getElementById('buyStatus').textContent = `Error: ${err.message}`;
+      } finally {
+        setBuyButtonsDisabled(false);
+      }
+    }
+
+    async function pollBuyTask(taskId) {
+      try {
+        const res = await fetch(`/api/buy/${taskId}`);
+        const data = await res.json();
+        if (data.error) {
+          document.getElementById('buyStatus').textContent = `Status error: ${data.message || data.error}`;
+          return;
+        }
+
+        const parts = [`Status: ${data.status || 'UNKNOWN'}`];
+        if (data.pageUrl) parts.push(`Page: ${data.pageUrl}`);
+        if (data.summary) parts.push(`Summary: ${data.summary}`);
+        document.getElementById('buyStatus').innerHTML = parts.join('<br>');
+
+        if (!isTerminalBuyStatus(data.status)) {
+          currentBuyPollTimer = setTimeout(() => pollBuyTask(taskId), 3000);
+        }
+      } catch (err) {
+        document.getElementById('buyStatus').textContent = `Status error: ${err.message}`;
+      }
+    }
+
     function closeModal() {
+      if (currentBuyPollTimer) clearTimeout(currentBuyPollTimer);
       document.getElementById('paymentModal').classList.remove('active');
     }
   </script>

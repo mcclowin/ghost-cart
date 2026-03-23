@@ -2,6 +2,7 @@
  * Web search via Tavily + Firecrawl for stores without APIs
  * Used for: Amazon, AliExpress, Selfridges, Zara, etc.
  */
+import { firecrawlScrape } from './locus.js';
 
 const MARKETPLACE_DOMAINS = {
   'ASOS': ['asos.com'],
@@ -20,6 +21,48 @@ const MARKETPLACE_DOMAINS = {
   'Uniqlo': ['uniqlo.com'],
   'Zara': ['zara.com'],
 };
+const MAX_VALIDATION_CANDIDATES = 8;
+const PRODUCT_URL_PATTERNS = [
+  /\/prd\/\d+/i,
+  /\/product(s)?\//i,
+  /\/p\/\d+/i,
+  /\/item\//i,
+  /\/dp\//i,
+  /\/buy\//i,
+];
+const CATEGORY_URL_PATTERNS = [
+  /\/cat\//i,
+  /\/search/i,
+  /\/refine/i,
+  /\/collections?\//i,
+  /\/category\//i,
+  /\/outerwear(\/|$)/i,
+  /\/promo\//i,
+  /\/offers?(\/|$)/i,
+  /\/jackets?(\/|$)/i,
+  /[?&](cid|refine|search|q)=/i,
+];
+const CATEGORY_TITLE_PATTERNS = [
+  /\bshop\b/i,
+  /\bdiscover\b/i,
+  /\bcollections?\b/i,
+  /\bouterwear\b/i,
+  /\bjackets? & coats\b/i,
+  /\bjackets?\b.*\bcoats?\b/i,
+];
+const TITLE_NOISE_TOKENS = new Set(['mens', 'men', 'womens', 'women', 'womans', 'man', 'woman']);
+const QUERY_NOISE_TOKENS = new Set([
+  'for', 'with', 'and', 'the', 'a', 'an', 'in', 'on', 'to',
+  'mens', 'men', 'womens', 'women', 'womans', 'man', 'woman',
+  'jacket', 'jackets', 'coat', 'coats', 'puffer', 'puffy',
+  'insulated', 'quilted', 'hooded',
+]);
+const COLOR_TOKENS = new Set([
+  'mustard', 'yellow', 'gold', 'amber', 'ochre', 'khaki', 'olive',
+  'green', 'blue', 'navy', 'black', 'white', 'grey', 'gray', 'stone',
+  'pink', 'red', 'burgundy', 'brown', 'tan', 'beige', 'cream', 'orange',
+  'purple', 'lilac', 'silver', 'metallic',
+]);
 
 /**
  * Search via Tavily API (finds product pages across the web)
@@ -57,6 +100,20 @@ function tokenize(text) {
     .filter(Boolean);
 }
 
+function stripTitleNoise(text) {
+  return tokenize(text)
+    .filter(token => !TITLE_NOISE_TOKENS.has(token))
+    .join(' ');
+}
+
+function extractQuerySignalTokens(text) {
+  return tokenize(text).filter(token => !QUERY_NOISE_TOKENS.has(token));
+}
+
+function extractColorTokens(text) {
+  return tokenize(text).filter(token => COLOR_TOKENS.has(token));
+}
+
 function getMarketplaceDomains(marketplace) {
   if (!marketplace) return [];
   if (MARKETPLACE_DOMAINS[marketplace]) return MARKETPLACE_DOMAINS[marketplace];
@@ -77,33 +134,182 @@ function titleOverlapScore(left, right) {
   return matches / leftTokens.size;
 }
 
-function selectBestTavilyMatch(item, matches) {
+function normaliseText(text) {
+  return String(text || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function domainMatchesExpected(url, expectedDomains) {
+  if (!expectedDomains.length) return true;
+  try {
+    const hostname = new URL(url).hostname.replace(/^www\./, '').toLowerCase();
+    return expectedDomains.some(domain => hostname === domain || hostname.endsWith(`.${domain}`));
+  } catch {
+    return false;
+  }
+}
+
+function scoreUrlShape(url) {
+  let score = 0;
+  if (PRODUCT_URL_PATTERNS.some(pattern => pattern.test(url))) score += 0.45;
+  if (CATEGORY_URL_PATTERNS.some(pattern => pattern.test(url))) score -= 0.6;
+  return score;
+}
+
+function scoreCategorySignals(match) {
+  const title = match.title || '';
+  const url = match.url || '';
+  let score = 0;
+
+  if (CATEGORY_TITLE_PATTERNS.some(pattern => pattern.test(title))) score -= 0.25;
+  if (
+    !PRODUCT_URL_PATTERNS.some(pattern => pattern.test(url)) &&
+    /\b(view all|shop all|results for|discover more)\b/i.test(match.content || '')
+  ) {
+    score -= 0.25;
+  }
+
+  return score;
+}
+
+function scorePriceEvidence(item, matchText) {
+  const priceText = item.price?.display || '';
+  if (!priceText) return 0;
+  if (matchText.includes(priceText.toLowerCase())) return 0.12;
+
+  const amount = item.price?.amount;
+  if (amount == null) return 0;
+  const simpleAmount = String(amount).replace(/\.00$/, '');
+  return matchText.includes(simpleAmount) ? 0.06 : 0;
+}
+
+function scoreTitleEvidence(item, matchTitle, matchText) {
+  const titleScore = titleOverlapScore(item.title, `${matchTitle} ${matchText}`);
+  const normalisedItemTitle = normaliseText(item.title);
+  const normalisedMatchTitle = normaliseText(matchTitle);
+
+  let score = titleScore;
+  if (normalisedMatchTitle && normalisedMatchTitle.includes(normalisedItemTitle)) score += 0.2;
+  if (normalisedItemTitle && normalisedItemTitle.includes(normalisedMatchTitle)) score += 0.08;
+  return score;
+}
+
+function scoreQuerySignal(match, queryHints = {}) {
+  const combined = `${match.title || ''} ${match.content || ''} ${match.url || ''}`.toLowerCase();
+  let score = 0;
+
+  for (const token of queryHints.signalTokens || []) {
+    if (combined.includes(token)) score += 0.12;
+  }
+
+  const matchColors = new Set(extractColorTokens(combined));
+  const desiredColors = queryHints.colorTokens || [];
+  if (desiredColors.length > 0) {
+    const matchedColorCount = desiredColors.filter(token => matchColors.has(token)).length;
+    score += matchedColorCount * 0.35;
+
+    const conflictingColors = [...matchColors].filter(
+      token => !desiredColors.includes(token)
+    );
+    if (matchedColorCount === 0) {
+      score -= conflictingColors.length > 0 ? 0.45 : 0.18;
+    }
+  }
+
+  return score;
+}
+
+function scoreTavilyMatch(item, match, expectedDomains, queryHints) {
+  const matchTitle = match.title || '';
+  const matchText = `${match.title || ''} ${match.content || ''}`.toLowerCase();
+  const url = match.url || '';
+
+  let score = 0;
+  score += scoreTitleEvidence(item, matchTitle, matchText);
+  score += scoreQuerySignal(match, queryHints);
+  score += scoreUrlShape(url);
+  score += scoreCategorySignals(match);
+  score += scorePriceEvidence(item, matchText);
+
+  if (domainMatchesExpected(url, expectedDomains)) score += 0.1;
+  if ((match.content || '').length > 120) score += 0.03;
+  if (/out of stock|sold out/i.test(matchText)) score -= 0.2;
+
+  return score;
+}
+
+function selectBestTavilyMatch(item, matches, expectedDomains = [], queryHints = {}) {
   let best = null;
-  let bestScore = 0;
+  let bestScore = -Infinity;
 
   for (const match of matches) {
-    const score = titleOverlapScore(item.title, `${match.title || ''} ${match.content || ''}`);
+    const score = scoreTavilyMatch(item, match, expectedDomains, queryHints);
     if (score > bestScore) {
       bestScore = score;
       best = match;
     }
   }
 
-  return bestScore >= 0.35 ? best : null;
+  return bestScore >= 0.55 ? best : null;
+}
+
+function buildResolutionQueries(item) {
+  const priceText = item.price?.display || '';
+  const title = item.title || '';
+  const strippedTitle = stripTitleNoise(title);
+  const marketplace = item.marketplace || '';
+
+  return [
+    `${title} ${marketplace} ${priceText}`.trim(),
+    `${strippedTitle} ${marketplace} ${priceText}`.trim(),
+    `${strippedTitle} ${priceText}`.trim(),
+  ].filter(Boolean);
+}
+
+function buildContextQueries(contextQuery, marketplace, priceText) {
+  if (!contextQuery) return [];
+  return [
+    `${contextQuery} ${marketplace} ${priceText}`.trim(),
+    `${contextQuery} ${marketplace}`.trim(),
+    contextQuery.trim(),
+  ].filter(Boolean);
 }
 
 /**
  * Resolve Google Shopping listings to real store product URLs via Tavily.
  * This replaces Google result pages with likely canonical product pages.
  */
-export async function resolveShoppingResults(shoppingResults, limit = 12) {
+export async function resolveShoppingResults(shoppingResults, limit = 12, options = {}) {
   const candidates = shoppingResults.slice(0, limit);
+  const contextQuery = options.query || '';
+  const queryHints = {
+    signalTokens: extractQuerySignalTokens(contextQuery),
+    colorTokens: extractColorTokens(contextQuery),
+  };
 
   const resolved = await Promise.all(candidates.map(async (item) => {
     const domains = getMarketplaceDomains(item.marketplace);
-    const query = `${item.title} ${item.marketplace || ''} ${item.price?.display || ''}`.trim();
-    const matches = await searchTavily(query, domains, 3);
-    const bestMatch = selectBestTavilyMatch(item, matches);
+    const queryVariants = [
+      ...buildResolutionQueries(item),
+      ...buildContextQueries(contextQuery, item.marketplace || '', item.price?.display || ''),
+    ];
+    const matchGroups = await Promise.all(
+      queryVariants.map(query => searchTavily(query, domains, 8))
+    );
+    const matches = [];
+    const seenUrls = new Set();
+    for (const group of matchGroups) {
+      for (const match of group) {
+        if (!match?.url || seenUrls.has(match.url)) continue;
+        seenUrls.add(match.url);
+        matches.push(match);
+      }
+    }
+
+    const bestMatch = selectBestTavilyMatch(item, matches, domains, queryHints);
 
     if (!bestMatch) return null;
 
@@ -140,24 +346,66 @@ export async function resolveShoppingResults(shoppingResults, limit = 12) {
  */
 export async function scrapeProductPage(url) {
   try {
-    const response = await fetch('https://beta-api.paywithlocus.com/api/wrapped/firecrawl/scrape', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${process.env.LOCUS_API_KEY}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        url: url,
-        formats: ['markdown'],
-      }),
-    });
-
-    const data = await response.json();
-    return data.success ? data.data : null;
+    const response = await firecrawlScrape(url);
+    return response.body.success ? response.body.data : null;
   } catch (error) {
     console.error('Firecrawl scrape error:', error.message);
     return null;
   }
+}
+
+function overlapRatio(expected, actual) {
+  const left = new Set(tokenize(expected));
+  const right = new Set(tokenize(actual));
+  if (left.size === 0 || right.size === 0) return 0;
+
+  let matches = 0;
+  for (const token of left) {
+    if (right.has(token)) matches += 1;
+  }
+
+  return matches / left.size;
+}
+
+function looksLikeCategoryPage(markdown) {
+  const text = String(markdown || '').toLowerCase();
+  return (
+    /\b(filter|sort by|view all|showing \d+|results for|shop all|related categories|collection)\b/.test(text) ||
+    (/\bjackets\b/.test(text) && !/\bpuffer\b|\bparka\b|\bhooded\b|\bdown jacket\b|\binsulated\b/.test(text))
+  );
+}
+
+function selectValidationExcerpt(markdown) {
+  const text = String(markdown || '').replace(/\s+/g, ' ').trim();
+  return text.slice(0, 280) || null;
+}
+
+export async function validateResolvedResults(results, limit = MAX_VALIDATION_CANDIDATES) {
+  const candidates = results.slice(0, limit);
+
+  const validated = await Promise.all(candidates.map(async (item) => {
+    const page = await scrapeProductPage(item.url);
+    const markdown = page?.markdown || page?.content || '';
+    if (!markdown) return null;
+
+    const titleMatch = overlapRatio(item.title, markdown);
+    const priceText = item.price?.display || '';
+    const hasPrice = priceText ? markdown.includes(priceText) : true;
+    const categoryPage = looksLikeCategoryPage(markdown);
+
+    if (titleMatch < 0.3 || categoryPage || !hasPrice) {
+      return null;
+    }
+
+    return {
+      ...item,
+      snippet: selectValidationExcerpt(markdown) || item.snippet,
+      validated: true,
+      validationSource: 'firecrawl',
+    };
+  }));
+
+  return validated.filter(Boolean);
 }
 
 /**

@@ -16,7 +16,7 @@ const searchResults = new Map();
  * 1. Venice AI parses query → structured search terms
  * 2. SerpAPI Google Shopping → discovery candidates
  * 3. Tavily → resolve exact store product URLs
- * 4. Heuristics → validate and rank resolved listings
+ * 4. Heuristics → rank resolved listings
  */
 router.post('/search', async (req, res) => {
   try {
@@ -49,18 +49,24 @@ router.post('/search', async (req, res) => {
 
     // ── Step 3: Resolve exact product URLs via Tavily ──
     console.log('🔗 Step 3: Resolving store product URLs via Tavily...');
-    const resolvedResults = await resolveShoppingResults(shoppingResults, Math.max(maxResults * 2, 12));
+    const resolvedResults = await resolveShoppingResults(
+      shoppingResults,
+      Math.max(maxResults * 2, 12),
+      { query: primarySearch }
+    );
     console.log(`   → Resolved store URLs: ${resolvedResults.length}`);
 
     // Deduplicate resolved URLs
     const seen = new Set();
-    let allResults = resolvedResults.filter(r => {
+    const dedupedResolvedResults = resolvedResults.filter(r => {
       if (!r.url || seen.has(r.url)) return false;
       seen.add(r.url);
       return true;
     });
 
-    // ── Step 4: Validate and rank resolved listings ──
+    const allResults = dedupedResolvedResults;
+
+    // ── Step 4: Rank resolved listings ──
     console.log('🏆 Step 4: Ranking resolved product pages...');
     let ranked;
     if (allResults.length > 0) {
@@ -92,7 +98,7 @@ router.post('/search', async (req, res) => {
       duration,
       sources: {
         googleShopping: shoppingResults.length,
-        resolvedUrls: resolvedResults.length,
+        resolvedUrls: dedupedResolvedResults.length,
       },
       privacy: 'All queries processed with zero data retention',
     });
