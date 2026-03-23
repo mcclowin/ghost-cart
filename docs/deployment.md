@@ -18,7 +18,7 @@ This is the current recommendation because GhostCart is an Express app with:
 GhostCart should run with:
 
 ```bash
-npm start
+pnpm start
 ```
 
 The production start script is defined in [package.json](/home/ubuntu/Dropbox/WEB/ghost-cart/package.json).
@@ -44,7 +44,7 @@ Expected public URLs:
 
 Recommended service settings:
 
-- Start command: `npm start`
+- Start command: `pnpm start`
 - Healthcheck path: `/health`
 - Public networking: enabled
 - Serverless: disabled

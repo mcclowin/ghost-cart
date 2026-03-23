@@ -7,9 +7,9 @@ GhostCart is a privacy-first AI purchasing agent that searches across multiple m
 ## Quick Start
 
 ```bash
-npm install
+pnpm install
 cp .env.example .env  # Add your API keys
-npm run dev
+pnpm run dev
 ```
 
 ## How It Works
