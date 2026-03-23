@@ -6,6 +6,7 @@
   "main": "src/index.js",
   "scripts": {
     "dev": "node --watch src/index.js",
+    "build": "node -e \"console.log('No build step required')\"",
     "start": "node src/index.js",
     "test": "echo \"No tests yet\" && exit 0",
     "erc8004:register": "node scripts/register-erc8004.mjs",
