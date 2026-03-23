@@ -3,10 +3,28 @@
  * Used for: Amazon, AliExpress, Selfridges, Zara, etc.
  */
 
+const MARKETPLACE_DOMAINS = {
+  'ASOS': ['asos.com'],
+  'Mountain Warehouse': ['mountainwarehouse.com'],
+  'Mainline': ['mainlinemenswear.co.uk'],
+  'Superdry': ['superdry.com'],
+  'superdry.com': ['superdry.com'],
+  'Argos': ['argos.co.uk'],
+  'Amazon': ['amazon.co.uk'],
+  'Currys': ['currys.co.uk'],
+  'Farfetch': ['farfetch.com'],
+  'Harrods': ['harrods.com'],
+  'John Lewis': ['johnlewis.com'],
+  'NET-A-PORTER': ['net-a-porter.com'],
+  'Selfridges': ['selfridges.com'],
+  'Uniqlo': ['uniqlo.com'],
+  'Zara': ['zara.com'],
+};
+
 /**
  * Search via Tavily API (finds product pages across the web)
  */
-export async function searchTavily(query, sites = []) {
+export async function searchTavily(query, sites = [], maxResults = 10) {
   try {
     const searchQuery = sites.length > 0
       ? `${query} ${sites.map(s => `site:${s}`).join(' OR ')}`
@@ -18,7 +36,7 @@ export async function searchTavily(query, sites = []) {
       body: JSON.stringify({
         api_key: process.env.TAVILY_API_KEY,
         query: searchQuery,
-        max_results: 10,
+        max_results: maxResults,
         include_domains: sites.length > 0 ? sites : undefined,
       }),
     });
@@ -29,6 +47,92 @@ export async function searchTavily(query, sites = []) {
     console.error('Tavily search error:', error.message);
     return [];
   }
+}
+
+function tokenize(text) {
+  return String(text || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .split(/\s+/)
+    .filter(Boolean);
+}
+
+function getMarketplaceDomains(marketplace) {
+  if (!marketplace) return [];
+  if (MARKETPLACE_DOMAINS[marketplace]) return MARKETPLACE_DOMAINS[marketplace];
+  if (marketplace.includes('.')) return [marketplace.toLowerCase()];
+  return [];
+}
+
+function titleOverlapScore(left, right) {
+  const leftTokens = new Set(tokenize(left));
+  const rightTokens = new Set(tokenize(right));
+  if (leftTokens.size === 0 || rightTokens.size === 0) return 0;
+
+  let matches = 0;
+  for (const token of leftTokens) {
+    if (rightTokens.has(token)) matches += 1;
+  }
+
+  return matches / leftTokens.size;
+}
+
+function selectBestTavilyMatch(item, matches) {
+  let best = null;
+  let bestScore = 0;
+
+  for (const match of matches) {
+    const score = titleOverlapScore(item.title, `${match.title || ''} ${match.content || ''}`);
+    if (score > bestScore) {
+      bestScore = score;
+      best = match;
+    }
+  }
+
+  return bestScore >= 0.35 ? best : null;
+}
+
+/**
+ * Resolve Google Shopping listings to real store product URLs via Tavily.
+ * This replaces Google result pages with likely canonical product pages.
+ */
+export async function resolveShoppingResults(shoppingResults, limit = 12) {
+  const candidates = shoppingResults.slice(0, limit);
+
+  const resolved = await Promise.all(candidates.map(async (item) => {
+    const domains = getMarketplaceDomains(item.marketplace);
+    const query = `${item.title} ${item.marketplace || ''} ${item.price?.display || ''}`.trim();
+    const matches = await searchTavily(query, domains, 3);
+    const bestMatch = selectBestTavilyMatch(item, matches);
+
+    if (!bestMatch) return null;
+
+    return {
+      marketplace: extractStoreName(bestMatch.url) || item.marketplace,
+      title: item.title,
+      url: bestMatch.url,
+      snippet: bestMatch.content || null,
+      price: item.price,
+      image: item.image || null,
+      rating: item.rating || null,
+      reviews: item.reviews || null,
+      seller: item.seller || null,
+      shipping: item.shipping || null,
+      condition: item.condition || 'New',
+      badge: item.badge || null,
+      originalGoogleUrl: item.url,
+      serpPosition: item.serpPosition,
+      productId: item.productId || null,
+      source: 'google_shopping_resolved',
+    };
+  }));
+
+  const seen = new Set();
+  return resolved.filter(item => {
+    if (!item?.url || seen.has(item.url)) return false;
+    seen.add(item.url);
+    return true;
+  });
 }
 
 /**

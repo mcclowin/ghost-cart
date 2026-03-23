@@ -349,7 +349,7 @@
       const sources = data.sources || {};
       const parts = [];
       if (sources.googleShopping) parts.push(`Google Shopping: ${sources.googleShopping}`);
-      if (sources.ebay) parts.push(`eBay: ${sources.ebay}`);
+      if (sources.resolvedUrls != null) parts.push(`Resolved URLs: ${sources.resolvedUrls}`);
       if (data.duration) parts.push(`${(data.duration / 1000).toFixed(1)}s`);
 
       document.getElementById('metaBar').innerHTML = `

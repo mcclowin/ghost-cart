@@ -3,6 +3,39 @@ import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 
+const MAX_RANKING_CANDIDATES = 30;
+const MAX_RANKED_RESULTS = 8;
+const STOP_WORDS = new Set([
+  'a', 'an', 'and', 'are', 'as', 'at', 'be', 'but', 'by', 'for', 'from', 'i',
+  'if', 'in', 'into', 'is', 'it', 'its', 'me', 'my', 'of', 'on', 'or', 's',
+  'so', 'that', 'the', 'their', 'them', 'these', 'this', 'to', 'want', 'with',
+  'you', 'your',
+]);
+const GENERIC_PAGE_PATTERNS = [
+  /\bshop\b/i,
+  /\bsale\b/i,
+  /\bcategory\b/i,
+  /\bresults\b/i,
+  /\bcollection\b/i,
+  /\bproducts\b/i,
+  /\brange\b/i,
+  /\bbrowse\b/i,
+];
+const TRUSTED_MARKETPLACE_SCORES = {
+  'Amazon': 82,
+  'Argos': 84,
+  'ASOS': 80,
+  'Currys': 86,
+  'eBay': 68,
+  'Farfetch': 82,
+  'Harrods': 89,
+  'John Lewis': 90,
+  'NET-A-PORTER': 86,
+  'Selfridges': 88,
+  'Uniqlo': 84,
+  'Zara': 79,
+};
+
 // Try to load Codex auth token as fallback
 function getCodexToken() {
   try {
@@ -13,6 +46,190 @@ function getCodexToken() {
     }
   } catch (e) {}
   return null;
+}
+
+function truncateText(value, maxLength) {
+  if (!value || typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (trimmed.length <= maxLength) return trimmed;
+  return `${trimmed.slice(0, maxLength - 3)}...`;
+}
+
+function parseJsonContent(content, context) {
+  try {
+    return JSON.parse(content);
+  } catch (error) {
+    const preview = truncateText(content, 600) || '<empty>';
+    console.error(`LLM JSON parse failed during ${context}:`, preview);
+    throw error;
+  }
+}
+
+function tokenize(text) {
+  return String(text || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .split(/\s+/)
+    .filter(token => token.length > 1 && !STOP_WORDS.has(token));
+}
+
+function uniqueTokens(items) {
+  return [...new Set(items.flatMap(tokenize))];
+}
+
+function normalisePrice(price) {
+  if (price == null) return null;
+  if (typeof price === 'number') return price;
+  if (typeof price === 'string') {
+    const match = price.match(/(\d+(?:[.,]\d{1,2})?)/);
+    return match ? parseFloat(match[1].replace(',', '.')) : null;
+  }
+  if (typeof price === 'object' && price.amount != null) {
+    const amount = Number(price.amount);
+    return Number.isFinite(amount) ? amount : null;
+  }
+  return null;
+}
+
+function formatPrice(price) {
+  if (price == null) return null;
+  if (typeof price === 'string') return price;
+  if (typeof price === 'number') return `£${price.toFixed(2)}`;
+  if (typeof price === 'object') return price.display || (price.amount != null ? `£${Number(price.amount).toFixed(2)}` : null);
+  return null;
+}
+
+function clamp(value, min = 0, max = 100) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function getMarketplaceTrustScore(marketplace) {
+  return TRUSTED_MARKETPLACE_SCORES[marketplace] || 72;
+}
+
+function isGenericPage(result, matchRatio) {
+  const title = String(result.title || '');
+  const snippet = String(result.snippet || '');
+  const url = String(result.url || '');
+  const text = `${title} ${snippet}`;
+
+  if (GENERIC_PAGE_PATTERNS.some(pattern => pattern.test(text))) {
+    return matchRatio < 0.6;
+  }
+
+  if (/\/search|\/category|\/collections|\/collections\/|\/c\//i.test(url)) {
+    return true;
+  }
+
+  if (/\b(men|women|kids)\b.*\b(jackets|coats|clothing|fashion)\b/i.test(title) && !/\b(puffer|parka|gilet|hooded|quilted|insulated)\b/i.test(title)) {
+    return true;
+  }
+
+  return false;
+}
+
+function buildRankingContext(query, parsed = {}) {
+  return {
+    searchTokens: uniqueTokens([
+      query,
+      ...(parsed.searchTerms || []),
+      parsed.productType,
+      parsed.brand,
+      parsed.model,
+      parsed.color,
+      parsed.style,
+      ...(parsed.requirements || []),
+    ]),
+    brand: parsed.brand ? String(parsed.brand).toLowerCase() : null,
+    model: parsed.model ? String(parsed.model).toLowerCase() : null,
+    color: parsed.color ? String(parsed.color).toLowerCase() : null,
+    styleTokens: uniqueTokens([parsed.style, ...(parsed.requirements || [])]),
+    productTypeTokens: uniqueTokens([parsed.productType]),
+  };
+}
+
+function scoreResult(result, priceStats, context) {
+  const title = String(result.title || '');
+  const snippet = String(result.snippet || '');
+  const haystack = `${title} ${snippet}`.toLowerCase();
+  const titleTokens = new Set(tokenize(title));
+  const textTokens = new Set(tokenize(haystack));
+  const matchedTokens = context.searchTokens.filter(token => textTokens.has(token));
+  const titleMatchedTokens = context.searchTokens.filter(token => titleTokens.has(token));
+  const matchRatio = context.searchTokens.length > 0 ? matchedTokens.length / context.searchTokens.length : 0.5;
+  const titleMatchRatio = context.searchTokens.length > 0 ? titleMatchedTokens.length / context.searchTokens.length : 0.5;
+  const priceAmount = normalisePrice(result.price);
+  const hasPrice = priceAmount != null;
+  const genericPage = isGenericPage(result, matchRatio);
+  const warnings = [];
+
+  let relevanceScore = 25 + (matchRatio * 45) + (titleMatchRatio * 25);
+  if (context.brand && haystack.includes(context.brand)) relevanceScore += 8;
+  if (context.model && haystack.includes(context.model)) relevanceScore += 10;
+  if (context.color && haystack.includes(context.color)) relevanceScore += 6;
+  if (context.productTypeTokens.some(token => haystack.includes(token))) relevanceScore += 6;
+  if (context.styleTokens.some(token => haystack.includes(token))) relevanceScore += 5;
+  if (genericPage) relevanceScore -= 35;
+  if (!hasPrice) relevanceScore -= 20;
+  relevanceScore = clamp(relevanceScore);
+
+  let valueScore = 55;
+  if (hasPrice && priceStats.max > priceStats.min) {
+    const relativeCheapness = 1 - ((priceAmount - priceStats.min) / (priceStats.max - priceStats.min));
+    valueScore = 35 + (relativeCheapness * 45);
+  } else if (hasPrice) {
+    valueScore = 70;
+  }
+
+  const shippingText = String(result.shipping || '').toLowerCase();
+  if (/free/i.test(shippingText)) valueScore += 8;
+  if (/see listing|unknown|tbd/i.test(shippingText)) {
+    valueScore -= 6;
+    warnings.push('Shipping cost unclear');
+  }
+  valueScore = clamp(valueScore);
+
+  let trustScore = getMarketplaceTrustScore(result.marketplace);
+  const rating = Number(result.rating || result.seller?.rating || 0);
+  if (Number.isFinite(rating) && rating > 0) {
+    trustScore += rating > 5 ? Math.min(12, rating / 200) : Math.min(12, rating * 2);
+  } else {
+    warnings.push('No seller rating surfaced');
+  }
+
+  const reviewCount = Number(result.reviews || result.seller?.feedbackScore || 0);
+  if (Number.isFinite(reviewCount) && reviewCount > 0) {
+    trustScore += Math.min(10, Math.log10(reviewCount + 1) * 4);
+  }
+
+  if (/used|pre-owned|second hand/i.test(String(result.condition || ''))) {
+    trustScore -= 10;
+    warnings.push('Used item');
+  }
+
+  trustScore = clamp(trustScore);
+
+  const isActualProduct = hasPrice && !genericPage && relevanceScore >= 35;
+  if (!hasPrice) warnings.push('No visible price');
+  if (genericPage) warnings.push('Looks like a category/search page');
+
+  const overallScore = clamp((relevanceScore * 0.5) + (valueScore * 0.3) + (trustScore * 0.2));
+
+  let recommendation = 'Balanced pick based on relevance, price, and seller trust';
+  if (overallScore >= 85) recommendation = 'Top pick with strong relevance and pricing';
+  else if (valueScore >= 80 && trustScore >= 70) recommendation = 'Good value from a credible seller';
+  else if (trustScore < 60) recommendation = 'Cheap option, but seller confidence is weaker';
+
+  return {
+    isActualProduct,
+    priceAmount,
+    relevanceScore: Math.round(relevanceScore),
+    valueScore: Math.round(valueScore),
+    trustScore: Math.round(trustScore),
+    overallScore: Math.round(overallScore),
+    warnings,
+    recommendation,
+  };
 }
 
 // Resolve provider and API key
@@ -98,84 +315,72 @@ Return JSON only:
     response_format: { type: 'json_object' },
   });
 
-  return JSON.parse(response.choices[0].message.content);
+  return parseJsonContent(response.choices[0].message.content, 'query parsing');
 }
 
 /**
  * Validate and rank search results
  */
-export async function rankResults(query, results) {
-  if (!hasValidKey) {
-    console.log('   📊 Returning raw results (no LLM for ranking)');
-    return {
-      results: results.slice(0, 10).map((r, i) => ({
-        rank: i + 1,
-        ...r,
-        relevanceScore: 50,
-        valueScore: 50,
-        trustScore: 50,
-        overallScore: 50,
-        warnings: [],
-        recommendation: 'Add an LLM key for smart ranking',
-      })),
-      bestPick: 'Add an LLM API key for intelligent ranking',
-      privacyNote: 'Search processed locally',
-    };
+export async function rankResults(query, results, parsed = {}) {
+  const rankingSourceResults = results.slice(0, MAX_RANKING_CANDIDATES);
+  const context = buildRankingContext(query, parsed);
+  const pricedValues = rankingSourceResults
+    .map(result => normalisePrice(result.price))
+    .filter(value => value != null);
+  const priceStats = {
+    min: pricedValues.length ? Math.min(...pricedValues) : 0,
+    max: pricedValues.length ? Math.max(...pricedValues) : 0,
+  };
+
+  if (results.length > rankingSourceResults.length) {
+    console.log(`   ✂️ Trimmed ranking input from ${results.length} to ${rankingSourceResults.length} candidates for deterministic scoring`);
   }
 
-  console.log(`   🏆 Ranking ${results.length} results via ${provider}...`);
-  const response = await llm.chat.completions.create({
-    model,
-    messages: [
-      {
-        role: 'system',
-        content: `You are a shopping comparison expert. Given search results from multiple stores, you must:
+  console.log(`   📊 Validating and ranking ${rankingSourceResults.length} results with heuristics...`);
 
-1. FILTER OUT irrelevant results:
-   - Generic brand/category pages (not a specific product listing)
-   - Products that don't match what the user asked for
-   - Out of stock items
-   - Results with no price
+  const filtered = [];
+  const ranked = [];
 
-2. RANK remaining results by best value
-
-3. For each VALID result, provide scores and details
-
-Return JSON:
-{
-  "results": [
-    {
-      "rank": 1,
-      "marketplace": "store name",
-      "title": "exact product name",
-      "price": "£XX.XX",
-      "url": "direct product URL",
-      "image": "image URL if available",
-      "relevanceScore": 0-100,
-      "valueScore": 0-100,
-      "trustScore": 0-100,
-      "overallScore": 0-100,
-      "isActualProduct": true,
-      "warnings": ["any red flags"],
-      "recommendation": "brief text"
+  for (const result of rankingSourceResults) {
+    const scoring = scoreResult(result, priceStats, context);
+    if (!scoring.isActualProduct) {
+      const reason = scoring.warnings[0] || 'Not a specific in-stock product listing';
+      filtered.push(`${result.title || result.url || 'Untitled result'} — ${reason}`);
+      continue;
     }
-  ],
-  "filtered": ["list of results removed and why"],
-  "bestPick": "which one to buy and why in one sentence",
-  "privacyNote": "Your search was processed with zero data retention"
-}
 
-ONLY include results where isActualProduct is true.`
-      },
-      {
-        role: 'user',
-        content: `User searched for: "${query}"\n\nRaw results:\n${JSON.stringify(results, null, 2)}`
-      }
-    ],
-    response_format: { type: 'json_object' },
-  });
+    ranked.push({
+      marketplace: result.marketplace,
+      title: result.title,
+      price: formatPrice(result.price),
+      url: result.url,
+      image: result.image || null,
+      relevanceScore: scoring.relevanceScore,
+      valueScore: scoring.valueScore,
+      trustScore: scoring.trustScore,
+      overallScore: scoring.overallScore,
+      warnings: scoring.warnings.slice(0, 2),
+      recommendation: scoring.recommendation,
+    });
+  }
 
-  return JSON.parse(response.choices[0].message.content);
+  ranked.sort((a, b) => b.overallScore - a.overallScore || b.relevanceScore - a.relevanceScore || a.price.localeCompare?.(b.price || '') || 0);
+
+  const topResults = ranked.slice(0, MAX_RANKED_RESULTS).map((item, index) => ({
+    rank: index + 1,
+    ...item,
+  }));
+
+  const bestPick = topResults[0]
+    ? `${topResults[0].title} from ${topResults[0].marketplace} looks strongest on match, price, and seller quality.`
+    : 'No strong product matches after filtering generic or incomplete listings.';
+
+  return {
+    results: topResults,
+    filtered: filtered.slice(0, 12),
+    bestPick,
+    privacyNote: 'Your search was processed with zero data retention',
+  };
 }
 
 export { llm };

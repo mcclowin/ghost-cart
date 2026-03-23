@@ -1,5 +1,4 @@
-import dotenv from 'dotenv';
-dotenv.config(); // MUST be first — before any service imports read env vars
+import 'dotenv/config'; // Preload env before ESM imports evaluate dependent modules
 
 import express from 'express';
 import cors from 'cors';
