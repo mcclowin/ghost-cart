@@ -92,6 +92,7 @@ export function createOrUpdateReceipt(paymentId, {
   paymentTxHash = null,
   payerAddress = null,
   paidAt = null,
+  onchain = null,
   raw = null,
 }) {
   const payment = getPaymentRecord(paymentId);
@@ -111,6 +112,7 @@ export function createOrUpdateReceipt(paymentId, {
     payerAddress,
     paidAt: paidAt || now(),
     metadata: payment.metadata || {},
+    onchain: onchain || existing?.onchain || null,
     createdAt: existing?.createdAt || now(),
     updatedAt: now(),
     raw,

@@ -8,7 +8,9 @@
     "dev": "node --watch src/index.js",
     "start": "node src/index.js",
     "test": "echo \"No tests yet\" && exit 0",
-    "erc8004:register": "node scripts/register-erc8004.mjs"
+    "erc8004:register": "node scripts/register-erc8004.mjs",
+    "receipts:deploy": "node scripts/deploy-receipts.mjs",
+    "receipts:link": "node scripts/link-receipts-erc8004.mjs"
   },
   "keywords": [
     "ai-agent",

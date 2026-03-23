@@ -7,6 +7,7 @@ import {
   updatePaymentRecord,
 } from '../services/payments-store.js';
 import { getCheckoutSnapshot, startCheckoutAutomation } from '../services/purchase.js';
+import { writeReceiptOnchain } from '../services/receipts-chain.js';
 import {
   createStripeCheckoutSession,
   hasStripeKey,
@@ -46,6 +47,36 @@ function mapStripeStatus(session) {
   if (session.payment_status === 'paid') return 'PAID';
   if (session.status === 'expired') return 'EXPIRED';
   return 'PENDING';
+}
+
+async function maybeWriteReceiptOnchain(payment, receipt) {
+  if (!payment || !receipt || receipt.onchain?.txHash) return receipt;
+
+  try {
+    const onchain = await writeReceiptOnchain(payment, receipt);
+    if (!onchain) return receipt;
+    return createOrUpdateReceipt(payment.id, {
+      provider: receipt.provider,
+      externalId: receipt.externalId,
+      paymentTxHash: receipt.paymentTxHash,
+      payerAddress: receipt.payerAddress,
+      paidAt: receipt.paidAt,
+      onchain,
+      raw: receipt.raw,
+    });
+  } catch (error) {
+    return createOrUpdateReceipt(payment.id, {
+      provider: receipt.provider,
+      externalId: receipt.externalId,
+      paymentTxHash: receipt.paymentTxHash,
+      payerAddress: receipt.payerAddress,
+      paidAt: receipt.paidAt,
+      onchain: {
+        error: error.message,
+      },
+      raw: receipt.raw,
+    });
+  }
 }
 
 async function maybeStartBackgroundPurchase(payment) {
@@ -230,12 +261,13 @@ router.get('/payments/:paymentId', async (req, res) => {
       });
 
       if (mappedStatus === 'PAID') {
-        createOrUpdateReceipt(payment.id, {
+        const receipt = createOrUpdateReceipt(payment.id, {
           provider: 'stripe',
           externalId: session.id,
           paidAt: next.paidAt,
           raw: session,
         });
+        await maybeWriteReceiptOnchain(next, receipt);
       }
     }
 
@@ -253,7 +285,7 @@ router.get('/payments/:paymentId', async (req, res) => {
         });
 
         if (mappedStatus === 'PAID') {
-          createOrUpdateReceipt(payment.id, {
+          const receipt = createOrUpdateReceipt(payment.id, {
             provider: 'locus',
             externalId: session.id,
             paymentTxHash: session.paymentTxHash || null,
@@ -261,6 +293,7 @@ router.get('/payments/:paymentId', async (req, res) => {
             paidAt: session.paidAt || null,
             raw: session,
           });
+          await maybeWriteReceiptOnchain(next, receipt);
         }
       }
     }

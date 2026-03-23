@@ -30,7 +30,7 @@ This file is a working summary of the human-agent collaboration behind GhostCart
 - We implemented GhostCart-owned payment collection instead of treating payment choice as just a hint for merchant checkout.
 - Stripe was set up for human card payments.
 - Locus Checkout was set up for USDC and agent-payable GhostCart sessions.
-- We verified the real Locus merchant session route and implemented it as `POST /api/checkout/sessions`.
+- We verified the real Locus merchant session route and later converged on the current GhostCart payment entrypoint at `POST /api/payments/checkout`.
 - We installed and configured Stripe CLI locally for webhook forwarding.
 - Stripe webhook delivery was verified end-to-end with `checkout.session.completed -> 200 OK`.
 - Locus session creation was also verified.
@@ -44,6 +44,23 @@ This file is a working summary of the human-agent collaboration behind GhostCart
   - agentURI: `https://ghostcart.app/.well-known/agent-card.json`
 - We agreed that receipts should be tied to GhostCart’s ERC-8004 identity, but stored as separate payment/purchase artifacts rather than inside the ERC-8004 registry itself.
 - We implemented a local payment/receipt store so Stripe and Locus payments now create receipt records that can later be upgraded to on-chain proofs.
+- We then verified the ERC-8004 design against the spec and confirmed that:
+  - ERC-8004 defines identity, reputation, and validation registries
+  - payments and receipts are orthogonal to the protocol
+  - the correct GhostCart design is a separate receipts contract linked back to the registered agent identity
+- We added a dedicated receipts contract deployment flow on Base.
+- Deployment succeeded:
+  - receipts contract: `0xac689e780712f12861d900640a84b7ff42566335`
+- We updated GhostCart so paid Stripe and Locus sessions attempt to write receipt proofs on-chain after payment settlement.
+- We updated the agent card builder so GhostCart can expose deployed receipts-contract metadata from local deployment state.
+- We also linked the deployed receipts contract back into GhostCart’s ERC-8004 identity metadata using the key `receiptsContract`.
+- The metadata link transaction succeeded:
+  - tx: `0xcaff70a477a1e4c763866b1cc48577a9eeb94998b9ef5ada1569592181cc7cbe`
+- Along the way, we had to fix three deployment issues:
+  - the receipts deploy script was not preloading `.env`
+  - the deploy path was using a runtime ABI that did not include the contract constructor
+  - the ERC-8004 metadata write needed explicit pending-nonce handling to avoid underpriced replacement errors
+- We added a separate recovery command so the deployed receipts contract can be linked into ERC-8004 metadata without redeploying.
 
 ### Skill / `skill.md`
 
@@ -65,7 +82,22 @@ The intent around `skill.md` was:
 >
 > I’d still recommend option 2 eventually, but if you want minimal change right now I can just update the inline `/skill.md` response and nothing else.
 
-That migration still has not been completed. The skill response is still effectively server-owned and should eventually be moved into a real file.
+That migration was completed later. GhostCart now serves a real file-backed skill from [public/skill.md](/home/ubuntu/Dropbox/WEB/ghost-cart/public/skill.md), routed through [src/index.js](/home/ubuntu/Dropbox/WEB/ghost-cart/src/index.js).
+
+### Landing Page UX Polish
+
+- We tightened the landing page after real usage exposed awkward flow and spacing issues.
+- The `skill.md` panel on the homepage was too visually heavy between the search box and the results.
+- We changed the UI so:
+  - the skills panel starts collapsed
+  - it can be expanded on demand
+  - it now sits lower on the page instead of interrupting the search-to-results flow
+- We also changed search behavior so the page scrolls down to the results/status area after a search completes.
+- We tightened the buy modal layout because the shipping form was pushing the payment buttons off-screen on smaller viewports.
+- The modal now:
+  - allows scrolling when needed
+  - keeps more shipping fields side-by-side
+  - preserves a mobile fallback at smaller breakpoints
 
 ## Earlier Sessions
 

@@ -5,4 +5,5 @@ dist/
 *.log
 .locus.beta.json
 .erc8004.json
+.receipts-contract.json
 .synthesis-credentials

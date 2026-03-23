@@ -46,8 +46,6 @@ The repository currently supports only part of the intended flow.
 
 ### Not Implemented Yet
 
-- Stripe Checkout or PaymentIntent flow
-- Stripe settlement tracking
 - Reclaim proof generation or verification
 - Bond.Credit borrowing flow
 - Repayment reconciliation tied to settled receivables
@@ -61,11 +59,13 @@ The intended Bond.Credit flow already appears in the product plan:
 
 The codebase itself shows that the financing layer is still conceptual:
 
-- [src/routes/buy.js](/home/ubuntu/Dropbox/WEB/ghost-cart/src/routes/buy.js#L173) starts checkout automation, but does not create or verify a user payment.
+- [src/routes/payments.js](/home/ubuntu/Dropbox/WEB/ghost-cart/src/routes/payments.js) creates Stripe and Locus payment sessions and polls settlement state.
+- [src/routes/webhook.js](/home/ubuntu/Dropbox/WEB/ghost-cart/src/routes/webhook.js) handles Stripe and Locus webhook events and can trigger background purchase preparation.
+- [src/routes/buy.js](/home/ubuntu/Dropbox/WEB/ghost-cart/src/routes/buy.js#L173) starts direct checkout automation without going through GhostCart payment collection first.
 - [src/routes/buy.js](/home/ubuntu/Dropbox/WEB/ghost-cart/src/routes/buy.js#L197) returns an insufficient-balance response when the Locus wallet lacks spendable USDC.
-- [src/routes/webhook.js](/home/ubuntu/Dropbox/WEB/ghost-cart/src/routes/webhook.js#L9) contains only a placeholder Stripe webhook.
-- [package.json](/home/ubuntu/Dropbox/WEB/ghost-cart/package.json#L23) does not currently include Stripe dependencies.
 - [src/services/erc8004.js](/home/ubuntu/Dropbox/WEB/ghost-cart/src/services/erc8004.js#L29) already exposes the agent card and existing onchain identity metadata.
+
+Stripe and payment-session tracking now exist in the codebase. The gap is no longer payment collection itself; the gap is financing against pending settlement and repayment automation.
 
 ## Assessment Of Bond.Credit Fit
 

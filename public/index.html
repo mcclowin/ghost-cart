@@ -36,12 +36,125 @@
     .search-box button:hover { background: #6a56d6; }
     .search-box button:disabled { opacity: 0.5; cursor: not-allowed; }
 
-    .payment-lab {
-      margin: 12px 0 28px;
-      padding: 16px;
-      border: 1px solid #222;
-      border-radius: 14px;
+    .terminal-panel {
+      margin: 14px 0 28px;
+      border: 1px solid #242424;
+      border-radius: 16px;
+      background: linear-gradient(180deg, #101010 0%, #0d0d0d 100%);
+      overflow: hidden;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.28);
+    }
+    .terminal-panel.secondary {
+      margin-top: 28px;
+      margin-bottom: 20px;
+    }
+    .terminal-panel.compact .terminal-body {
+      max-height: 148px;
+      overflow: hidden;
+      position: relative;
+      padding-bottom: 24px;
+    }
+    .terminal-panel.compact .terminal-grid,
+    .terminal-panel.compact .terminal-line:nth-of-type(3) {
+      display: none;
+    }
+    .terminal-panel.compact .terminal-body::after {
+      content: '';
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      height: 54px;
+      background: linear-gradient(180deg, rgba(13, 13, 13, 0) 0%, rgba(13, 13, 13, 0.96) 100%);
+      pointer-events: none;
+    }
+    .terminal-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 16px;
+      background: #151515;
+      border-bottom: 1px solid #242424;
+    }
+    .terminal-dots {
+      display: flex;
+      gap: 7px;
+    }
+    .terminal-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+    }
+    .terminal-dot.red { background: #ff5f57; }
+    .terminal-dot.yellow { background: #febb2e; }
+    .terminal-dot.green { background: #28c840; }
+    .terminal-label {
+      color: #7b7b7b;
+      font-size: 0.78em;
+      font-family: 'JetBrains Mono', 'SFMono-Regular', 'Fira Code', monospace;
+      letter-spacing: 0.04em;
+    }
+    .terminal-actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .terminal-toggle {
+      border: 1px solid #2b2b2b;
+      border-radius: 999px;
+      background: #101010;
+      color: #b8bec5;
+      padding: 6px 12px;
+      font-size: 0.76em;
+      cursor: pointer;
+    }
+    .terminal-toggle:hover {
+      border-color: #7b68ee;
+      color: #f4f4f5;
+    }
+    .terminal-body {
+      padding: 16px 18px;
+      font-family: 'JetBrains Mono', 'SFMono-Regular', 'Fira Code', monospace;
+      font-size: 0.82em;
+      line-height: 1.58;
+      color: #cfd3d6;
+    }
+    .terminal-line { margin-bottom: 10px; }
+    .terminal-prompt { color: #4ade80; margin-right: 10px; }
+    .terminal-command { color: #f4f4f5; }
+    .terminal-output {
+      color: #9098a1;
+      margin-top: 4px;
+      padding-left: 20px;
+    }
+    .terminal-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+      margin-top: 16px;
+      padding-top: 14px;
+      border-top: 1px dashed #262626;
+    }
+    .terminal-chip {
+      border: 1px solid #242424;
+      border-radius: 12px;
       background: #121212;
+      padding: 12px 14px;
+    }
+    .terminal-chip strong {
+      display: block;
+      color: #f4f4f5;
+      font-size: 0.92em;
+      margin-bottom: 4px;
+    }
+    .terminal-chip span {
+      color: #8f98a1;
+      font-size: 0.88em;
+    }
+
+    .payment-lab {
+      margin-top: 10px;
+      padding-top: 4px;
     }
     .payment-lab h3 {
       font-size: 1em;
@@ -89,7 +202,10 @@
     .spinner { animation: spin 1s linear infinite; display: inline-block; }
     @keyframes spin { to { transform: rotate(360deg); } }
 
-    .results { margin-top: 20px; }
+    .results {
+      margin-top: 20px;
+      scroll-margin-top: 18px;
+    }
 
     .result-card {
       background: #141414; border: 1px solid #222; border-radius: 12px;
@@ -185,16 +301,25 @@
       font-size: 0.85em; border-top: 1px solid #1a1a1a; margin-top: 40px;
     }
     .privacy-footer a { color: #7b68ee; text-decoration: none; }
+    .footer-links {
+      display: flex;
+      gap: 12px;
+      justify-content: center;
+      flex-wrap: wrap;
+      margin-top: 8px;
+    }
 
     .modal-overlay {
       display: none; position: fixed; top: 0; left: 0;
       width: 100%; height: 100%; background: rgba(0,0,0,0.8);
-      z-index: 1000; justify-content: center; align-items: center;
+      z-index: 1000; justify-content: center; align-items: flex-start;
+      overflow-y: auto; padding: 20px 16px;
     }
     .modal-overlay.active { display: flex; }
     .modal {
       background: #1a1a1a; border: 1px solid #333; border-radius: 16px;
-      padding: 30px; max-width: 400px; width: 90%;
+      padding: 24px; max-width: 560px; width: min(560px, 100%);
+      max-height: calc(100vh - 40px); overflow-y: auto;
     }
     .modal h3 { margin-bottom: 16px; }
     .payment-options { display: flex; flex-direction: column; gap: 10px; }
@@ -231,6 +356,35 @@
       margin-bottom: 10px;
       line-height: 1.4;
     }
+
+    @media (max-width: 720px) {
+      .terminal-grid,
+      .payment-lab-grid {
+        grid-template-columns: 1fr;
+      }
+      .result-card {
+        flex-direction: column;
+      }
+      .result-price {
+        text-align: left;
+        padding-top: 0;
+      }
+    }
+
+    @media (max-width: 560px) {
+      .address-form {
+        grid-template-columns: 1fr;
+      }
+      .modal {
+        padding: 20px 16px;
+      }
+      .terminal-actions {
+        gap: 6px;
+      }
+      .terminal-toggle {
+        padding: 5px 10px;
+      }
+    }
   </style>
 </head>
 <body>
@@ -246,28 +400,67 @@
       <button id="searchBtn">Search</button>
     </div>
 
-    <div class="payment-lab">
-      <h3>GhostCart Payment Test</h3>
-      <p>Test GhostCart’s own collection flows: Stripe for human card payments, Locus for USDC and agent-payable checkout sessions.</p>
-      <div class="payment-lab-grid">
-        <input type="number" min="0.1" step="0.01" id="paymentAmount" value="1.00" placeholder="Amount" />
-        <input type="text" id="paymentDescription" value="GhostCart demo payment" placeholder="Description" />
-        <button class="btn-stripe" id="startStripeCheckout">Stripe</button>
-        <button class="btn-locus" id="startLocusCheckout">Locus</button>
-      </div>
-      <div id="paymentLabStatus" class="payment-lab-status"></div>
-    </div>
-
     <div id="status" class="status"></div>
     <div id="results" class="results"></div>
     <div id="bestPick"></div>
     <div id="filtered"></div>
     <div id="metaBar"></div>
+    
+    <div class="terminal-panel compact secondary" id="skillsPanel">
+      <div class="terminal-bar">
+        <div class="terminal-dots">
+          <span class="terminal-dot red"></span>
+          <span class="terminal-dot yellow"></span>
+          <span class="terminal-dot green"></span>
+        </div>
+        <div class="terminal-actions">
+          <div class="terminal-label">ghostcart.skill.md</div>
+          <button class="terminal-toggle" id="skillsToggle" type="button" aria-expanded="false">Expand</button>
+        </div>
+      </div>
+      <div class="terminal-body">
+        <div class="terminal-line">
+          <span class="terminal-prompt">$</span><span class="terminal-command">ghostcart summary</span>
+          <div class="terminal-output">Privacy-first purchasing agent with search, ranking, payment collection, and background merchant checkout preparation.</div>
+        </div>
+        <div class="terminal-line">
+          <span class="terminal-prompt">$</span><span class="terminal-command">ghostcart flow</span>
+          <div class="terminal-output">search -> rank -> collect shipping -> pay GhostCart -> purchase in background</div>
+        </div>
+        <div class="terminal-line">
+          <span class="terminal-prompt">$</span><span class="terminal-command">ghostcart endpoints</span>
+          <div class="terminal-output">POST /api/search · POST /api/payments/checkout · GET /api/payments/:paymentId · GET /.well-known/agent-card.json</div>
+        </div>
+        <div class="terminal-grid">
+          <div class="terminal-chip">
+            <strong>Search + Compare</strong>
+            <span>Structured product discovery, URL resolution, validation, and ranking across noisy merchant surfaces.</span>
+          </div>
+          <div class="terminal-chip">
+            <strong>Payment Rails</strong>
+            <span>Stripe for human card funding, Locus for USDC and agent-payable GhostCart sessions.</span>
+          </div>
+          <div class="terminal-chip">
+            <strong>Background Purchase</strong>
+            <span>GhostCart continues merchant checkout after payment confirms, while the user sees only high-level progress.</span>
+          </div>
+          <div class="terminal-chip">
+            <strong>Agent Surface</strong>
+            <span>`skill.md`, ERC-8004 metadata, and payment receipts tied back to GhostCart’s on-chain identity.</span>
+          </div>
+        </div>
+      </div>
+    </div>
 
     <div class="privacy-footer">
       🔒 Your search queries are never stored or used for training.<br>
-      Stores see GhostCart, not you. 
-      <a href="/skill.md">Agent API</a> · <a href="/.well-known/agent-card.json">ERC-8004</a>
+      Stores see GhostCart, not you.
+      <div class="footer-links">
+        <a href="/skill.md">Agent API</a>
+        <a href="/.well-known/agent-card.json">ERC-8004</a>
+        <a href="https://github.com/mcclowin/ghost-cart" target="_blank" rel="noopener">GitHub</a>
+        <a href="#" id="openPaymentLab">Test payments</a>
+      </div>
     </div>
   </div>
 
@@ -277,15 +470,15 @@
       <div id="buyItemDetails" style="margin-bottom:16px; color:#aaa;"></div>
       <div class="helper-note">Confirm where GhostCart should ship this order, then choose how you want to fund the purchase.</div>
       <div class="address-form">
-        <input id="shipFullName" class="full-span" placeholder="Full name" />
+        <input id="shipFullName" placeholder="Full name" />
         <input id="shipEmail" placeholder="Email" />
-        <input id="shipPhone" placeholder="Phone (optional)" />
+        <input id="shipPhone" placeholder="Phone" />
+        <input id="shipCountry" placeholder="Country" value="United Kingdom" />
         <input id="shipLine1" class="full-span" placeholder="Address line 1" />
         <input id="shipLine2" class="full-span" placeholder="Address line 2 (optional)" />
         <input id="shipCity" placeholder="City" />
         <input id="shipState" placeholder="State / County" />
-        <input id="shipPostalCode" placeholder="Postal code" />
-        <input id="shipCountry" placeholder="Country" value="United Kingdom" />
+        <input id="shipPostalCode" class="full-span" placeholder="Postal code" />
       </div>
       <div class="payment-options">
         <button class="payment-btn" style="border-color:#635bff" id="btnCard">💳 Pay with Card</button>
@@ -293,6 +486,25 @@
         <button class="payment-btn" id="btnCancel">Cancel</button>
       </div>
       <div id="buyStatus" class="buy-status"></div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="paymentLabModal">
+    <div class="modal">
+      <h3>Test GhostCart Payments</h3>
+      <div class="payment-lab">
+        <p>Manual tester for GhostCart’s own payment collection flows.</p>
+        <div class="payment-lab-grid">
+          <input type="number" min="0.1" step="0.01" id="paymentAmount" value="1.00" placeholder="Amount" />
+          <input type="text" id="paymentDescription" value="GhostCart demo payment" placeholder="Description" />
+          <button class="btn-stripe" id="startStripeCheckout">Stripe</button>
+          <button class="btn-locus" id="startLocusCheckout">Locus</button>
+        </div>
+        <div id="paymentLabStatus" class="payment-lab-status"></div>
+      </div>
+      <div class="payment-options" style="margin-top:14px">
+        <button class="payment-btn" id="closePaymentLab">Close</button>
+      </div>
     </div>
   </div>
 
@@ -307,6 +519,8 @@
     let currentBuyPaymentId = null;
     let currentPaymentPollTimer = null;
     const SHIPPING_STORAGE_KEY = 'ghostcart.shippingAddress';
+    const skillsPanel = document.getElementById('skillsPanel');
+    const skillsToggle = document.getElementById('skillsToggle');
 
     function formatPrice(price) {
       if (!price) return '—';
@@ -326,6 +540,9 @@
     document.getElementById('btnCancel').addEventListener('click', closeModal);
     document.getElementById('startStripeCheckout').addEventListener('click', () => startPaymentCheckout('stripe'));
     document.getElementById('startLocusCheckout').addEventListener('click', () => startPaymentCheckout('locus'));
+    document.getElementById('openPaymentLab').addEventListener('click', openPaymentLab);
+    document.getElementById('closePaymentLab').addEventListener('click', closePaymentLab);
+    skillsToggle.addEventListener('click', toggleSkillsPanel);
 
     loadSavedShippingAddress();
 
@@ -375,8 +592,24 @@
         status.className = 'status';
       }
 
+      scrollToResults();
+
       btn.disabled = false;
       btn.textContent = 'Search';
+    }
+
+    function toggleSkillsPanel() {
+      const compact = skillsPanel.classList.toggle('compact');
+      skillsToggle.textContent = compact ? 'Expand' : 'Collapse';
+      skillsToggle.setAttribute('aria-expanded', compact ? 'false' : 'true');
+    }
+
+    function scrollToResults() {
+      const results = document.getElementById('results');
+      const target = results.children.length > 0 ? results : document.getElementById('status');
+      requestAnimationFrame(() => {
+        target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      });
     }
 
     function scoreClass(score) {
@@ -817,6 +1050,16 @@
     function closeModal() {
       if (currentBuyPollTimer) clearTimeout(currentBuyPollTimer);
       document.getElementById('paymentModal').classList.remove('active');
+    }
+
+    function openPaymentLab(event) {
+      if (event) event.preventDefault();
+      document.getElementById('paymentLabModal').classList.add('active');
+    }
+
+    function closePaymentLab() {
+      if (currentPaymentPollTimer) clearTimeout(currentPaymentPollTimer);
+      document.getElementById('paymentLabModal').classList.remove('active');
     }
 
     function isTerminalPaymentStatus(status) {

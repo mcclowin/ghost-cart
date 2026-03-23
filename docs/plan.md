@@ -1,5 +1,7 @@
 # GhostCart — Privacy-First Purchasing Agent
 
+> Status note: this is the original architecture and roadmap document. It describes the intended product direction and includes planned capabilities that are not all implemented yet.
+
 > "Shop the internet. Privately. Your agent buys, you stay invisible."
 
 ## Overview

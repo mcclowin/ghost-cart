@@ -4,6 +4,7 @@ import { resolve } from 'path';
 export const ERC8004_REGISTRY_ADDRESS = '0x8004A169FB4a3325136EB29fA0ceB6D2e539a432';
 export const ERC8004_CHAIN_ID = 8453;
 const ERC8004_METADATA_PATH = resolve(process.cwd(), '.erc8004.json');
+const RECEIPTS_METADATA_PATH = resolve(process.cwd(), '.receipts-contract.json');
 
 function readJsonFile(path) {
   try {
@@ -18,6 +19,11 @@ export function loadErc8004Registration() {
   return readJsonFile(ERC8004_METADATA_PATH);
 }
 
+export function loadReceiptsRegistration() {
+  if (!existsSync(RECEIPTS_METADATA_PATH)) return null;
+  return readJsonFile(RECEIPTS_METADATA_PATH);
+}
+
 export function getPublicBaseUrl(req) {
   const configured = process.env.AGENT_BASE_URL?.trim();
   if (configured) return configured.replace(/\/$/, '');
@@ -28,6 +34,7 @@ export function getPublicBaseUrl(req) {
 
 export function buildAgentCard(req) {
   const registration = loadErc8004Registration();
+  const receipts = loadReceiptsRegistration();
   const baseUrl = getPublicBaseUrl(req);
   const skillUrl = baseUrl ? `${baseUrl}/skill.md` : null;
   const apiUrl = baseUrl ? `${baseUrl}/api` : null;
@@ -61,6 +68,17 @@ export function buildAgentCard(req) {
       owner: registration.owner ?? null,
       registrationTxn: registration.registrationTxn || null,
       agentURI: registration.agentURI || null,
+    };
+  }
+
+  if (receipts?.address) {
+    card.receipts = {
+      chainId: receipts.chainId || ERC8004_CHAIN_ID,
+      contractAddress: receipts.address,
+      deployer: receipts.deployer || null,
+      deploymentTxn: receipts.txHash ? `https://basescan.org/tx/${receipts.txHash}` : null,
+      metadataKey: receipts.metadataKey || null,
+      metadataTxn: receipts.metadataTxHash ? `https://basescan.org/tx/${receipts.metadataTxHash}` : null,
     };
   }
 

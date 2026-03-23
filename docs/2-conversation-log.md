@@ -15,6 +15,12 @@ This collaboration phase focused on four topics:
 3. investigating official marketplace integration paths for eBay and Amazon
 4. creating a proper `skill.md` surface for agent-facing interaction with the app
 
+Later in the same phase, the work expanded to:
+
+5. deploying GhostCart to a live domain
+6. auditing and restructuring the repository documentation
+7. clarifying the role of Visa CLI in the end-to-end purchase flow
+
 ## Repo Review And Product Reality Check
 
 - We reviewed the repository structure and compared the current implementation to the architecture in [plan.md](/home/ubuntu/Dropbox/WEB/ghost-cart/docs/plan.md).
@@ -101,6 +107,57 @@ This collaboration phase focused on four topics:
 - We switched the `/skill.md` route to serve a static file from `public/skill.md`.
 - We created a real [public/skill.md](/home/ubuntu/Dropbox/WEB/ghost-cart/public/skill.md) that documents the actual implemented API contract.
 
+## Deployment And Public URLs
+
+- We reviewed deployment options and chose a normal Node.js deployment shape over a serverless adaptation.
+- Railway was identified as the best immediate fit because GhostCart already runs as a standard Express server with webhooks, static pages, and background orchestration.
+- We clarified that the correct production process is `npm start`, not the local `npm run dev` watch mode.
+- We confirmed that the live domain should expose:
+  - `https://ghostcart.app/`
+  - `https://ghostcart.app/skill.md`
+  - `https://ghostcart.app/.well-known/agent-card.json`
+  - `https://ghostcart.app/health`
+- We clarified that the ERC-8004 `agentURI` should resolve to `https://ghostcart.app/.well-known/agent-card.json`.
+- We also clarified that the deployed service port should follow Railway's injected runtime port rather than the local fallback port.
+
+## Documentation Audit And Restructure
+
+- We audited the existing documentation set across `README.md`, `docs/`, and the new `skill.md`.
+- We found that the repository had useful planning and process notes, but lacked a clean reader-facing docs structure.
+- We also found stale statements:
+  - the old conversation log still said the `skill.md` file migration had not happened
+  - the Bond.Credit fit note still described Stripe payment flow as unimplemented even though payment routes and webhooks now exist
+  - the README still implied stronger autonomous purchasing capability than the live product currently supports
+- We decided the `skill.md` file is necessary but not sufficient on its own because it is agent-facing API documentation, not human-facing product or deployment documentation.
+- We added and updated a small docs set:
+  - [docs/README.md](/home/ubuntu/Dropbox/WEB/ghost-cart/docs/README.md)
+  - [docs/architecture.md](/home/ubuntu/Dropbox/WEB/ghost-cart/docs/architecture.md)
+  - [docs/deployment.md](/home/ubuntu/Dropbox/WEB/ghost-cart/docs/deployment.md)
+  - [docs/user-guide.md](/home/ubuntu/Dropbox/WEB/ghost-cart/docs/user-guide.md)
+  - updated [README.md](/home/ubuntu/Dropbox/WEB/ghost-cart/README.md)
+  - updated [docs/plan.md](/home/ubuntu/Dropbox/WEB/ghost-cart/docs/plan.md)
+  - updated [docs/bond-credit-fit.md](/home/ubuntu/Dropbox/WEB/ghost-cart/docs/bond-credit-fit.md)
+  - updated [docs/conversation-log.md](/home/ubuntu/Dropbox/WEB/ghost-cart/docs/conversation-log.md)
+- We added a Mermaid architecture diagram so readers can understand the full flow quickly.
+
+## Visa CLI Clarification
+
+- We clarified an important distinction in the product story.
+- Bond.Credit and zkTLS are part of the working-capital and settlement-gap story.
+- Visa CLI is part of the final order-execution story.
+- The human clarified that Visa CLI is not about merchant-specific payment instrumentation; it is GhostCart's own payment rail for completing checkout.
+- The human also clarified that Visa CLI specifically addresses the 3DS problem.
+- Based on that, we updated the docs to say:
+  - GhostCart already supports search, buyer-side payment collection, and background checkout preparation
+  - the remaining step for full autonomous purchase execution is GhostCart's own Visa CLI-backed payment rail
+  - Visa CLI is intended to handle the final checkout payment step, including 3DS, so GhostCart can place orders automatically
+
+### Architecture Framing After Clarification
+
+- Bond.Credit remains the intended underwriting and credit layer for settlement-gap financing.
+- Visa CLI is the intended mechanism for final automatic order placement.
+- These are complementary parts of the product, not competing explanations of the same missing step.
+
 ## Human-Agent Collaboration Patterns In This Phase
 
 - The human repeatedly pushed for documentation that reads correctly to outside reviewers, not just internal operator notes.
@@ -116,8 +173,13 @@ This collaboration phase focused on four topics:
 
 - GhostCart now has a clearer written position on Bond.Credit fit and financing architecture.
 - The repo now has a cleaner agent-facing `skill.md` delivery model.
+- The project is now deployed on its live domain shape and has a clearer public URL model.
+- The repo now has a proper docs index, architecture doc, deployment guide, and user guide.
 - The team now has a more accurate understanding of where eBay and Amazon belong in the marketplace roadmap.
 - The project narrative is more honest about what is implemented versus what is still speculative.
+- The product story now separates:
+  - financing and settlement-gap credit
+  - final order placement through Visa CLI
 
 ## Suggested Submission Use
 

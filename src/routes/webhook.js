@@ -2,9 +2,11 @@ import express, { Router } from 'express';
 import {
   createOrUpdateReceipt,
   findPaymentByExternal,
+  getReceiptForPayment,
   updatePaymentRecord,
 } from '../services/payments-store.js';
 import { startCheckoutAutomation } from '../services/purchase.js';
+import { writeReceiptOnchain } from '../services/receipts-chain.js';
 import { constructStripeEvent, hasStripeWebhookSecret } from '../services/stripe.js';
 import { verifyLocusWebhookSignature } from '../services/locus.js';
 
@@ -31,6 +33,38 @@ async function maybeStartBackgroundPurchase(payment) {
     purchaseMessage: result.body?.message || null,
     purchaseFailure: null,
   });
+}
+
+async function maybeWriteReceiptOnchain(payment) {
+  const receipt = getReceiptForPayment(payment.id);
+  if (!receipt || receipt.onchain?.txHash) return receipt;
+
+  try {
+    const onchain = await writeReceiptOnchain(payment, receipt);
+    if (!onchain) return receipt;
+    return createOrUpdateReceipt(payment.id, {
+      provider: receipt.provider,
+      externalId: receipt.externalId,
+      paymentTxHash: receipt.paymentTxHash,
+      payerAddress: receipt.payerAddress,
+      paidAt: receipt.paidAt,
+      onchain,
+      raw: receipt.raw,
+    });
+  } catch (error) {
+    console.error('Onchain receipt write failed:', error);
+    return createOrUpdateReceipt(payment.id, {
+      provider: receipt.provider,
+      externalId: receipt.externalId,
+      paymentTxHash: receipt.paymentTxHash,
+      payerAddress: receipt.payerAddress,
+      paidAt: receipt.paidAt,
+      onchain: {
+        error: error.message,
+      },
+      raw: receipt.raw,
+    });
+  }
 }
 
 /**
@@ -66,6 +100,7 @@ router.post('/stripe', express.raw({ type: 'application/json' }), async (req, re
           paidAt: payment.paidAt,
           raw: session,
         });
+        await maybeWriteReceiptOnchain(payment);
         await maybeStartBackgroundPurchase(payment);
       }
     }
@@ -108,7 +143,7 @@ router.post('/locus', express.raw({ type: 'application/json' }), async (req, res
     }
 
     if (payment && payload?.event === 'checkout.session.paid') {
-      updatePaymentRecord(payment.id, {
+      const next = updatePaymentRecord(payment.id, {
         status: 'PAID',
         providerStatus: 'PAID',
         paidAt: payload.data?.paidAt || new Date().toISOString(),
@@ -124,7 +159,8 @@ router.post('/locus', express.raw({ type: 'application/json' }), async (req, res
         paidAt: payload.data?.paidAt || null,
         raw: payload,
       });
-      await maybeStartBackgroundPurchase(payment);
+      await maybeWriteReceiptOnchain(next);
+      await maybeStartBackgroundPurchase(next);
     }
 
     if (payment && payload?.event === 'checkout.session.expired') {
