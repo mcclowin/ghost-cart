@@ -114,10 +114,10 @@ router.post('/payments/checkout', async (req, res) => {
     } = req.body || {};
 
     const normalizedAmount = normalizeAmountString(amount);
-    if (!provider || !['stripe', 'locus'].includes(provider)) {
+    if (!provider || !['stripe', 'locus', 'demo'].includes(provider)) {
       return res.status(400).json({
         error: 'invalid_provider',
-        message: 'provider must be "stripe" or "locus"',
+        message: 'provider must be "stripe", "locus", or "demo"',
       });
     }
 
@@ -125,6 +125,43 @@ router.post('/payments/checkout', async (req, res) => {
       return res.status(400).json({
         error: 'invalid_amount',
         message: 'amount must be a positive number',
+      });
+    }
+
+    // Demo provider — auto-confirms instantly for agent testing
+    if (provider === 'demo') {
+      const payment = createPaymentRecord({
+        provider: 'demo',
+        amount: normalizedAmount,
+        currency: 'DEMO',
+        description: description || 'GhostCart demo checkout',
+        metadata,
+      });
+
+      const next = updatePaymentRecord(payment.id, {
+        externalId: `demo-${payment.id}`,
+        status: 'PAID',
+        providerStatus: 'PAID',
+        paidAt: new Date().toISOString(),
+      });
+
+      createOrUpdateReceipt(next.id, {
+        provider: 'demo',
+        externalId: `demo-${payment.id}`,
+        paymentTxHash: '0x' + 'demo'.repeat(16),
+        payerAddress: '0x' + '0'.repeat(40),
+      });
+
+      // Trigger background purchase if purchaseIntent exists
+      maybeStartBackgroundPurchase(next);
+
+      return res.status(201).json({
+        paymentId: next.id,
+        provider: 'demo',
+        status: 'PAID',
+        providerStatus: 'PAID',
+        paidAt: next.paidAt,
+        note: 'Demo payment — auto-confirmed instantly. No real funds moved.',
       });
     }
 

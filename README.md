@@ -29,6 +29,37 @@ pnpm run dev
 - [Reclaim Protocol](https://reclaimprotocol.org) — ZK-TLS proofs
 - [Stripe](https://stripe.com) — Card payments
 
+## Testing
+
+### For humans (Stripe test mode)
+Stripe is in test mode. Use test card `4242 4242 4242 4242` with any future expiry and any CVC to complete a payment.
+
+### For agents (demo provider)
+Agents can use the `demo` payment provider for instant, zero-cost end-to-end testing:
+
+```bash
+curl -X POST https://ghostcart.app/api/payments/checkout \
+  -H "Content-Type: application/json" \
+  -d '{
+    "provider": "demo",
+    "amount": "9.99",
+    "description": "GhostCart demo purchase",
+    "metadata": {
+      "purchaseIntent": {
+        "url": "https://www.amazon.co.uk/dp/B0CRG38CXK",
+        "title": "USB-C Cable",
+        "price": "£9.99",
+        "marketplace": "Amazon"
+      }
+    }
+  }'
+```
+
+The demo provider auto-confirms instantly — no real funds, no checkout UI. The full flow runs: payment → receipt → background purchase automation.
+
+### For agents (Locus USDC)
+Agents with a Locus wallet and USDC balance can pay via `"provider": "locus"` for real on-chain payments.
+
 ## Hackathon
 
 Built for [The Synthesis](https://synthesis.md/hack/) — March 2026.

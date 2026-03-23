@@ -131,8 +131,11 @@ This returns the stored search record for a previous search request.
 
 Providers:
 
-- `stripe` for card checkout
-- `locus` for USDC checkout
+- `demo` for instant testing (no real funds, auto-confirms immediately)
+- `stripe` for card checkout (test mode: use card `4242 4242 4242 4242`)
+- `locus` for USDC checkout (requires Locus wallet with USDC balance)
+
+**Recommended for agents:** Use `"provider": "demo"` to test the full end-to-end flow without any funds or human interaction.
 
 For a plain payment session:
 
