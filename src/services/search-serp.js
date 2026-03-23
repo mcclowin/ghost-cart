@@ -1,14 +1,52 @@
 /**
  * SerpAPI Google Shopping integration
- * Returns structured product data: title, price, store, rating, image, link
- * Docs: https://serpapi.com/google-shopping-api
+ * 
+ * Strategy:
+ * 1. Google Shopping search → product candidates with images, prices, ratings
+ * 2. Extract ALL URL fields — some results have direct store URLs
+ * 3. For results with only Google redirect URLs → flag for Tavily resolution
  */
 
 /**
+ * Check if a URL is a real store product page (not a Google redirect)
+ */
+function isDirectStoreUrl(url) {
+  if (!url) return false;
+  try {
+    const hostname = new URL(url).hostname;
+    // Google internal URLs are NOT direct store links
+    return !hostname.includes('google.com') && !hostname.includes('google.co.');
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Extract the best available URL from a SerpAPI shopping result
+ * SerpAPI returns multiple URL fields — we want the most direct one
+ */
+function extractBestUrl(item) {
+  // Priority order: direct store link first, Google fallback last
+  const candidates = [
+    item.product_link,     // Sometimes a direct store URL
+    item.link,             // Main link — often Google redirect
+    item.source_link,      // Seller's direct link (if available)
+    item.second_hand_link, // For used items
+  ].filter(Boolean);
+
+  // Return first direct store URL, or the first available
+  const directUrl = candidates.find(isDirectStoreUrl);
+  const googleUrl = candidates[0]; // Fallback
+
+  return {
+    url: directUrl || googleUrl,
+    isDirect: !!directUrl,
+    googleFallbackUrl: directUrl ? null : googleUrl,
+  };
+}
+
+/**
  * Search Google Shopping via SerpAPI
- * @param {string} query - Search terms
- * @param {object} options - Search options
- * @returns {Array} Normalized product results
  */
 export async function searchGoogleShopping(query, options = {}) {
   const apiKey = process.env.SERPAPI_KEY;
@@ -22,14 +60,13 @@ export async function searchGoogleShopping(query, options = {}) {
       api_key: apiKey,
       engine: 'google_shopping',
       q: query,
-      gl: options.country || 'uk',     // UK results
+      gl: options.country || 'uk',
       hl: options.language || 'en',
       num: (options.limit || 10).toString(),
     });
 
-    // Add price range if specified
-    if (options.minPrice) params.append('tbs', `mr:1,price:1,ppr_min:${options.minPrice}`);
-    if (options.maxPrice) params.append('tbs', `mr:1,price:1,ppr_max:${options.maxPrice}`);
+    if (options.minPrice) params.append('min_price', options.minPrice);
+    if (options.maxPrice) params.append('max_price', options.maxPrice);
 
     const response = await fetch(`https://serpapi.com/search.json?${params}`);
     const data = await response.json();
@@ -39,29 +76,44 @@ export async function searchGoogleShopping(query, options = {}) {
       return [];
     }
 
-    return data.shopping_results.map(item => ({
-      marketplace: item.source || 'Google Shopping',
-      title: item.title,
-      price: {
-        amount: parseFloat(item.extracted_price) || null,
-        currency: 'GBP',
-        display: item.price || 'See store',
-      },
-      image: item.thumbnail || null,
-      url: item.link || item.product_link,
-      rating: item.rating || null,
-      reviews: item.reviews || null,
-      seller: {
-        name: item.source || 'Unknown',
-        rating: item.seller_rating || null,
-      },
-      shipping: item.delivery || null,
-      condition: item.second_hand_condition || 'New',
-      badge: item.tag || null, // "Great price", "Top quality", etc.
-      // SerpAPI specific
-      productId: item.product_id || null,
-      serpPosition: item.position,
-    }));
+    let directCount = 0;
+    let needsResolution = 0;
+
+    const results = data.shopping_results.map(item => {
+      const urlInfo = extractBestUrl(item);
+      if (urlInfo.isDirect) directCount++;
+      else needsResolution++;
+
+      return {
+        marketplace: item.source || 'Google Shopping',
+        title: item.title,
+        price: {
+          amount: parseFloat(item.extracted_price) || null,
+          currency: 'GBP',
+          display: item.price || 'See store',
+        },
+        image: item.thumbnail || null,
+        url: urlInfo.url,
+        isDirect: urlInfo.isDirect,
+        googleFallbackUrl: urlInfo.googleFallbackUrl,
+        rating: item.rating || null,
+        reviews: item.reviews || null,
+        seller: {
+          name: item.source || 'Unknown',
+          rating: item.seller_rating || null,
+        },
+        shipping: item.delivery || null,
+        condition: item.second_hand_condition || 'New',
+        badge: item.tag || null,
+        productId: item.product_id || null,
+        pageToken: item.serpapi_product_api_comparisons || item.page_token || null,
+        serpPosition: item.position,
+        source: 'google_shopping',
+      };
+    });
+
+    console.log(`   → ${directCount} direct store URLs, ${needsResolution} need resolution`);
+    return results;
 
   } catch (error) {
     console.error('SerpAPI search error:', error.message);
@@ -70,61 +122,42 @@ export async function searchGoogleShopping(query, options = {}) {
 }
 
 /**
- * Search Google web results for product pages on specific stores
- * Useful when Google Shopping doesn't cover a store
+ * Get detailed product info including seller offers with REAL store URLs
+ * Uses SerpAPI Immersive Product API
+ * Costs 1 API credit per call — use sparingly
  */
-export async function searchGoogleWeb(query, sites = [], limit = 5) {
+export async function getProductOffers(pageToken, options = {}) {
   const apiKey = process.env.SERPAPI_KEY;
-  if (!apiKey) return [];
+  if (!apiKey || !pageToken) return [];
 
   try {
-    const siteFilter = sites.length > 0
-      ? ' ' + sites.map(s => `site:${s}`).join(' OR ')
-      : '';
-
     const params = new URLSearchParams({
       api_key: apiKey,
-      engine: 'google',
-      q: query + siteFilter,
-      gl: 'uk',
-      hl: 'en',
-      num: limit.toString(),
+      engine: 'google_immersive_product',
+      page_token: pageToken,
+      more_stores: '1', // Get up to 13 stores
     });
 
     const response = await fetch(`https://serpapi.com/search.json?${params}`);
     const data = await response.json();
 
-    return (data.organic_results || []).map(item => ({
-      title: item.title,
-      url: item.link,
-      snippet: item.snippet,
-      marketplace: extractDomain(item.link),
+    return (data.stores || []).map(store => ({
+      marketplace: store.source || 'Unknown',
+      title: store.title || data.title || '',
+      price: {
+        amount: parseFloat(store.extracted_price) || null,
+        currency: 'GBP',
+        display: store.price || 'See store',
+      },
+      url: store.link || null,
+      isDirect: isDirectStoreUrl(store.link),
+      shipping: store.delivery || null,
+      condition: store.condition || 'New',
+      source: 'immersive_product',
     }));
 
   } catch (error) {
-    console.error('SerpAPI web search error:', error.message);
+    console.error('SerpAPI Immersive Product error:', error.message);
     return [];
-  }
-}
-
-function extractDomain(url) {
-  try {
-    const domain = new URL(url).hostname.replace('www.', '');
-    // Pretty names
-    const names = {
-      'amazon.co.uk': 'Amazon',
-      'ebay.co.uk': 'eBay',
-      'selfridges.com': 'Selfridges',
-      'zara.com': 'Zara',
-      'asos.com': 'ASOS',
-      'aliexpress.com': 'AliExpress',
-      'espares.co.uk': 'eSpares',
-      'currys.co.uk': 'Currys',
-      'argos.co.uk': 'Argos',
-      'johnlewis.com': 'John Lewis',
-    };
-    return names[domain] || domain;
-  } catch {
-    return 'Unknown';
   }
 }
