@@ -618,6 +618,24 @@
       });
     }
 
+    function shortenHash(value, start = 10, end = 8) {
+      if (!value || typeof value !== 'string') return '';
+      if (value.length <= start + end + 3) return value;
+      return `${value.slice(0, start)}...${value.slice(-end)}`;
+    }
+
+    function explorerLink(value, type = 'tx') {
+      if (!value || typeof value !== 'string') return null;
+      const path = type === 'address' ? 'address' : 'tx';
+      return `https://basescan.org/${path}/${value}`;
+    }
+
+    function linkedValue(label, value, type = 'tx') {
+      const href = explorerLink(value, type);
+      if (!href) return `${label}: ${value}`;
+      return `${label}: <a href="${href}" target="_blank" rel="noopener">${shortenHash(value)}</a>`;
+    }
+
     function scoreClass(score) {
       if (score >= 75) return 'high';
       if (score <= 40) return 'low';
@@ -857,6 +875,21 @@
 
       if (receipt) {
         lines.push(`Receipt issued: ${receipt.id}`);
+        if (receipt.onchain?.receiptId) {
+          lines.push(`On-chain receipt ID: ${receipt.onchain.receiptId}`);
+        }
+        if (receipt.onchain?.contractAddress) {
+          lines.push(linkedValue('Receipt contract', receipt.onchain.contractAddress, 'address'));
+        }
+        if (receipt.onchain?.txHash) {
+          lines.push(linkedValue('On-chain tx', receipt.onchain.txHash, 'tx'));
+        }
+        if (receipt.onchain?.reused) {
+          lines.push('On-chain receipt already existed and was reused.');
+        }
+        if (receipt.onchain?.error) {
+          lines.push(`On-chain receipt error: ${receipt.onchain.error}`);
+        }
       }
 
       const checkpointKey = [
@@ -1089,6 +1122,11 @@
         parts.push(`Receipt: ${receipt.id}`);
         if (receipt.paymentTxHash) parts.push(`On-chain tx: ${receipt.paymentTxHash}`);
         if (receipt.payerAddress) parts.push(`Payer: ${receipt.payerAddress}`);
+        if (receipt.onchain?.receiptId) parts.push(`Receipt contract ID: ${receipt.onchain.receiptId}`);
+        if (receipt.onchain?.contractAddress) parts.push(linkedValue('Receipt contract', receipt.onchain.contractAddress, 'address'));
+        if (receipt.onchain?.txHash) parts.push(linkedValue('Receipt write tx', receipt.onchain.txHash, 'tx'));
+        if (receipt.onchain?.reused) parts.push('Receipt write reused existing on-chain receipt');
+        if (receipt.onchain?.error) parts.push(`Receipt write error: ${receipt.onchain.error}`);
       }
       document.getElementById('paymentLabStatus').innerHTML = parts.join('<br>');
     }
