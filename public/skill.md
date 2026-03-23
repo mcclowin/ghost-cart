@@ -135,7 +135,11 @@ Providers:
 - `stripe` for card checkout (test mode: use card `4242 4242 4242 4242`)
 - `locus` for USDC checkout (requires Locus wallet with USDC balance)
 
-**Recommended for agents:** Use `"provider": "demo"` to test the full end-to-end flow without any funds or human interaction.
+**Recommended for agents:**
+
+- Use `"provider": "demo"` to test the full end-to-end flow without any funds or human interaction.
+- Use `"provider": "locus"` for real USDC payments on Base. If you have a Locus wallet, this is the production path. Need credits? Request them at `POST https://api.paywithlocus.com/api/gift-code-requests` (see [Locus request_credits.md](https://paywithlocus.com/request_credits.md)).
+- The Locus checkout returns a `checkoutUrl` — open it to complete payment, or pay programmatically if your agent has Locus SDK integration.
 
 For a plain payment session:
 
