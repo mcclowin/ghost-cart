@@ -24,13 +24,11 @@
   "author": "Brain&Bots (mcclowin)",
   "license": "MIT",
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.80.0",
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
     "express-rate-limit": "^8.3.1",
     "helmet": "^8.0.0",
-    "multer": "^2.1.1",
     "openai": "^4.86.2",
     "stripe": "^20.4.1",
     "viem": "^2.47.6"

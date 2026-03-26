@@ -7,5 +7,3 @@ dist/
 .erc8004.json
 .receipts-contract.json
 .synthesis-credentials
-media/
-data/

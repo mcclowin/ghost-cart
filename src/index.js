@@ -6,8 +6,6 @@ import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import { resolve } from 'path';
 import { searchRouter } from './routes/search.js';
-import { searchImageRouter } from './routes/search-image.js';
-import { pagesRouter } from './routes/pages.js';
 import { buyRouter } from './routes/buy.js';
 import { webhookRouter } from './routes/webhook.js';
 import { paymentsRouter } from './routes/payments.js';
@@ -59,15 +57,10 @@ app.use('/api', apiKeyAuth);
 
 // API Routes
 app.use('/api/search', searchLimiter);
-app.use('/api/search-image', searchLimiter);
 app.use('/api/payments/checkout', checkoutLimiter);
 app.use('/api', searchRouter);
-app.use('/api', searchImageRouter);
 app.use('/api', buyRouter);
 app.use('/api', paymentsRouter);
-
-// Results pages (public, no auth)
-app.use('/', pagesRouter);
 
 // Agent Card (ERC-8004)
 app.get('/.well-known/agent-card.json', (req, res) => {
