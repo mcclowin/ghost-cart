@@ -4,6 +4,7 @@ import { searchGoogleShopping } from '../services/search-serp.js';
 import { resolveShoppingResults, validateResolvedResults } from '../services/search-web.js';
 import { hasFirecrawlKey } from '../services/firecrawl.js';
 import { randomUUID } from 'crypto';
+import { loadResult } from '../services/results-store.js';
 
 const router = Router();
 const searchResults = new Map();
@@ -119,7 +120,7 @@ router.post('/search', async (req, res) => {
 });
 
 router.get('/results/:searchId', (req, res) => {
-  const result = searchResults.get(req.params.searchId);
+  const result = searchResults.get(req.params.searchId) || loadResult(req.params.searchId);
   if (!result) return res.status(404).json({ error: 'Search not found' });
   res.json(result);
 });

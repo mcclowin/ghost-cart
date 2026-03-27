@@ -125,6 +125,14 @@ Use this endpoint first. The ranked results already include the merchant URL to 
 
 This returns the stored search record for a previous search request.
 
+Image search requests also return a canonical `page_url` such as:
+
+```text
+https://your-ghostcart-host.example/find/abc12345
+```
+
+That page is the human-facing canonical result URL. The API response remains the machine-facing canonical payload.
+
 ### 3. Create a payment session
 
 `POST /api/payments/checkout`

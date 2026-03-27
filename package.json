@@ -32,7 +32,6 @@
     "helmet": "^8.0.0",
     "multer": "^2.1.1",
     "openai": "^4.86.2",
-    "playwright-core": "^1.58.2",
     "stripe": "^20.4.1",
     "viem": "^2.47.6"
   },

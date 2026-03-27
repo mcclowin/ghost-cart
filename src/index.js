@@ -16,9 +16,10 @@ import { apiKeyAuth } from './middleware/auth.js';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const TRUST_PROXY_HOPS = Number(process.env.TRUST_PROXY_HOPS || 1);
 
 // Respect x-forwarded-* headers from ngrok/reverse proxies when building public URLs.
-app.set('trust proxy', true);
+app.set('trust proxy', TRUST_PROXY_HOPS);
 
 // Rate limiting
 const globalLimiter = rateLimit({

@@ -11,14 +11,15 @@
 import { Router } from 'express';
 import multer from 'multer';
 import { randomUUID } from 'crypto';
-import { writeFileSync, mkdirSync, existsSync } from 'fs';
+import { mkdirSync, existsSync } from 'fs';
 import { unlink } from 'fs/promises';
-import { extname, join } from 'path';
+import { extname } from 'path';
 import { analyzeClothingImage } from '../services/vision.js';
 import { parseQuery, rankResults, reconcileImageDiscovery } from '../services/venice.js';
 import { searchGoogleShopping } from '../services/search-serp.js';
 import { resolveShoppingResults } from '../services/search-web.js';
 import { inferLensExactMatch, searchGoogleLens } from '../services/search-lens.js';
+import { saveResult } from '../services/results-store.js';
 
 const router = Router();
 
@@ -50,9 +51,6 @@ const upload = multer({
     else cb(new Error('Only images allowed'));
   },
 });
-
-const RESULTS_DIR = 'data/results';
-if (!existsSync(RESULTS_DIR)) mkdirSync(RESULTS_DIR, { recursive: true });
 
 const BASE_URL = process.env.BASE_URL || process.env.AGENT_BASE_URL || 'http://localhost:3000';
 const LENS_PROVIDER = process.env.LENS_PROVIDER || 'none';
@@ -539,8 +537,7 @@ router.post('/search-image', upload.single('image'), async (req, res) => {
       createdAt: new Date().toISOString(),
     };
 
-    const resultPath = join(RESULTS_DIR, `${searchId}.json`);
-    writeFileSync(resultPath, JSON.stringify(resultData, null, 2));
+    saveResult(searchId, resultData);
 
     const pageUrl = `${publicBaseUrl.replace(/\/$/, '')}/find/${searchId}`;
     const dmText = formatDmReply(vision, exactBranch?.ranked, alternativesBranch.ranked, discovery, pageUrl);
