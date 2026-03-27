@@ -36,6 +36,104 @@
     .search-box button:hover { background: #6a56d6; }
     .search-box button:disabled { opacity: 0.5; cursor: not-allowed; }
 
+    .image-lab {
+      margin: 0 0 24px;
+      padding: 18px;
+      border-radius: 16px;
+      border: 1px solid #232336;
+      background: linear-gradient(180deg, #11111a 0%, #0d0d14 100%);
+    }
+    .image-lab h3 {
+      font-size: 1.02em;
+      margin-bottom: 6px;
+    }
+    .image-lab p {
+      color: #8d93a1;
+      font-size: 0.9em;
+      line-height: 1.5;
+      margin-bottom: 14px;
+    }
+    .image-lab-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr) minmax(0, 160px) auto;
+      gap: 10px;
+      align-items: center;
+    }
+    .image-lab-grid input {
+      width: 100%;
+      padding: 12px 14px;
+      border-radius: 10px;
+      border: 1px solid #333;
+      background: #141414;
+      color: #fff;
+      font-size: 0.95em;
+      outline: none;
+    }
+    .image-lab-grid input[type="file"] {
+      padding: 10px 12px;
+    }
+    .image-lab-grid button {
+      padding: 12px 18px;
+      border-radius: 10px;
+      border: none;
+      background: #4ade80;
+      color: #07120a;
+      cursor: pointer;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+    .image-lab-grid button:hover {
+      background: #3ed875;
+    }
+    .image-lab-grid button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    .image-lab-preview-row {
+      display: none;
+      gap: 14px;
+      align-items: center;
+      margin-top: 14px;
+      padding-top: 14px;
+      border-top: 1px solid #1e1e2c;
+    }
+    .image-lab-preview-row.active {
+      display: flex;
+    }
+    .image-lab-preview {
+      width: 82px;
+      min-width: 82px;
+      height: 82px;
+      border-radius: 12px;
+      overflow: hidden;
+      border: 1px solid #2c2c3d;
+      background: #151521;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #666b82;
+      font-size: 0.78em;
+    }
+    .image-lab-preview img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+    .image-lab-status {
+      flex: 1;
+      color: #a7adbb;
+      font-size: 0.88em;
+      line-height: 1.55;
+      word-break: break-word;
+    }
+    .image-lab-status a {
+      color: #7b68ee;
+      text-decoration: none;
+    }
+    .image-lab-status a:hover {
+      text-decoration: underline;
+    }
+
     .terminal-panel {
       margin: 14px 0 28px;
       border: 1px solid #242424;
@@ -285,6 +383,18 @@
     }
     .best-pick h3 { color: #4ade80; margin-bottom: 8px; }
 
+    .results-section-title {
+      margin: 18px 0 10px;
+      color: #f4f4f5;
+      font-size: 1em;
+      font-weight: 700;
+    }
+    .results-section-note {
+      color: #8f98a1;
+      font-size: 0.85em;
+      margin-bottom: 10px;
+    }
+
     .filtered-info {
       margin-top: 16px; padding: 12px; background: #1a1a1a;
       border-radius: 8px; font-size: 0.8em; color: #666;
@@ -359,7 +469,8 @@
 
     @media (max-width: 720px) {
       .terminal-grid,
-      .payment-lab-grid {
+      .payment-lab-grid,
+      .image-lab-grid {
         grid-template-columns: 1fr;
       }
       .result-card {
@@ -400,6 +511,21 @@
       <button id="searchBtn">Search</button>
     </div>
 
+    <div class="image-lab">
+      <h3>Image Search Lab</h3>
+      <p>Manual tester for <code>POST /api/search-image</code>. Upload an image directly to GhostCart, optionally add a fallback caption, and open the generated results page.</p>
+      <div class="image-lab-grid">
+        <input type="file" id="imageLabFile" accept="image/*" />
+        <input type="text" id="imageLabCaption" placeholder="Optional caption fallback" />
+        <input type="text" id="imageLabUsername" value="localtester" placeholder="Username" />
+        <button id="imageLabSearchBtn" type="button">Search Image</button>
+      </div>
+      <div class="image-lab-preview-row" id="imageLabPreviewRow">
+        <div class="image-lab-preview" id="imageLabPreview">No image</div>
+        <div class="image-lab-status" id="imageLabStatus">Choose a file to send directly to GhostCart.</div>
+      </div>
+    </div>
+
 
     <div id="status" class="status"></div>
     <div id="results" class="results"></div>
@@ -430,7 +556,7 @@
         </div>
         <div class="terminal-line">
           <span class="terminal-prompt">$</span><span class="terminal-command">ghostcart endpoints</span>
-          <div class="terminal-output">POST /api/search · POST /api/payments/checkout · GET /api/payments/:paymentId · GET /.well-known/agent-card.json</div>
+          <div class="terminal-output">POST /api/search · POST /api/search-image · POST /api/payments/checkout · GET /api/payments/:paymentId</div>
         </div>
         <div class="terminal-grid">
           <div class="terminal-chip">
@@ -519,6 +645,7 @@
     let currentBuyTerminalSeen = false;
     let currentBuyPaymentId = null;
     let currentPaymentPollTimer = null;
+    let currentImagePreviewUrl = null;
     const SHIPPING_STORAGE_KEY = 'ghostcart.shippingAddress';
 
 
@@ -541,6 +668,8 @@
     document.getElementById('searchInput').addEventListener('keydown', e => {
       if (e.key === 'Enter') doSearch();
     });
+    document.getElementById('imageLabFile').addEventListener('change', updateImageLabPreview);
+    document.getElementById('imageLabSearchBtn').addEventListener('click', doImageLabSearch);
     document.getElementById('btnCard').addEventListener('click', () => startGhostCartPurchase('stripe'));
     document.getElementById('btnUSDC').addEventListener('click', () => startGhostCartPurchase('locus'));
     document.getElementById('btnCancel').addEventListener('click', closeModal);
@@ -552,6 +681,37 @@
 
     loadSavedShippingAddress();
 
+    function updateImageLabPreview() {
+      const file = document.getElementById('imageLabFile').files?.[0];
+      const previewRow = document.getElementById('imageLabPreviewRow');
+      const preview = document.getElementById('imageLabPreview');
+      const status = document.getElementById('imageLabStatus');
+
+      if (currentImagePreviewUrl) {
+        URL.revokeObjectURL(currentImagePreviewUrl);
+        currentImagePreviewUrl = null;
+      }
+
+      if (!file) {
+        previewRow.classList.remove('active');
+        preview.textContent = 'No image';
+        status.textContent = 'Choose a file to send directly to GhostCart.';
+        return;
+      }
+
+      currentImagePreviewUrl = URL.createObjectURL(file);
+      preview.innerHTML = `<img src="${currentImagePreviewUrl}" alt="${file.name}" />`;
+      previewRow.classList.add('active');
+      status.textContent = `${file.name} selected. Ready to send to /api/search-image.`;
+    }
+
+    function resetRenderedResults() {
+      document.getElementById('results').innerHTML = '';
+      document.getElementById('bestPick').innerHTML = '';
+      document.getElementById('filtered').innerHTML = '';
+      document.getElementById('metaBar').innerHTML = '';
+    }
+
     async function doSearch() {
       const query = document.getElementById('searchInput').value.trim();
       if (!query) return;
@@ -561,10 +721,7 @@
 
       btn.disabled = true;
       btn.textContent = 'Searching...';
-      document.getElementById('results').innerHTML = '';
-      document.getElementById('bestPick').innerHTML = '';
-      document.getElementById('filtered').innerHTML = '';
-      document.getElementById('metaBar').innerHTML = '';
+      resetRenderedResults();
       
       status.className = 'status searching';
       status.innerHTML = '<span class="spinner">🔍</span> Searching privately across stores...';
@@ -602,6 +759,73 @@
 
       btn.disabled = false;
       btn.textContent = 'Search';
+    }
+
+    async function doImageLabSearch() {
+      const file = document.getElementById('imageLabFile').files?.[0];
+      const caption = document.getElementById('imageLabCaption').value.trim();
+      const username = document.getElementById('imageLabUsername').value.trim();
+      const btn = document.getElementById('imageLabSearchBtn');
+      const previewRow = document.getElementById('imageLabPreviewRow');
+      const status = document.getElementById('imageLabStatus');
+
+      if (!file) {
+        previewRow.classList.add('active');
+        status.textContent = 'Choose an image first.';
+        return;
+      }
+
+      btn.disabled = true;
+      btn.textContent = 'Searching...';
+      previewRow.classList.add('active');
+      status.innerHTML = '<span class="spinner">🧪</span> Uploading image and running vision + image search...';
+      resetRenderedResults();
+
+      const formData = new FormData();
+      formData.append('image', file);
+      if (caption) formData.append('caption', caption);
+      if (username) formData.append('username', username);
+
+      try {
+        const res = await fetch('/api/search-image', {
+          method: 'POST',
+          body: formData,
+        });
+
+        const data = await res.json();
+        if (!res.ok || data.error) {
+          status.textContent = `Search failed: ${data.error || data.message || 'Unknown error'}`;
+          return;
+        }
+
+        currentData = data;
+
+        const resultCount = Number.isFinite(data.resultCount) ? data.resultCount : 0;
+        const durationText = data.duration ? `${(data.duration / 1000).toFixed(1)}s` : 'unknown time';
+        const lensCount = (data.lensResults?.exactCount || 0) + (data.lensResults?.visualCount || 0);
+
+        if (data.exactResults?.results?.length || data.alternativeResults?.results?.length) {
+          renderImageSearchSections(data);
+        } else if (data.results?.results?.length > 0) {
+          renderResults(data.results);
+        } else if (lensCount > 0) {
+          renderLensResults(data.lensResults);
+        }
+
+        if (data.results || data.sources) {
+          renderMeta(data);
+        }
+
+        const exactCount = data.exactResults?.results?.length || 0;
+        const alternativeCount = data.alternativeResults?.results?.length || 0;
+        status.innerHTML = `<strong>${resultCount} primary result${resultCount === 1 ? '' : 's'}</strong> in ${durationText}<br>Exact matches: ${exactCount} · Alternatives: ${alternativeCount} · Lens references: ${lensCount}<br>${data.dm_text || ''}`;
+        scrollToResults();
+      } catch (err) {
+        status.textContent = `Search failed: ${err.message}`;
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Search Image';
+      }
     }
 
     function toggleSkillsPanel() {
@@ -642,7 +866,37 @@
       return '';
     }
 
-    function renderResults(ranked) {
+    function appendResultsSection(title, note = '') {
+      const container = document.getElementById('results');
+      const heading = document.createElement('div');
+      heading.className = 'results-section-title';
+      heading.textContent = title;
+      container.appendChild(heading);
+
+      if (note) {
+        const detail = document.createElement('div');
+        detail.className = 'results-section-note';
+        detail.textContent = note;
+        container.appendChild(detail);
+      }
+    }
+
+    function renderImageSearchSections(data) {
+      const hasExact = (data.exactResults?.results?.length || 0) > 0;
+      const hasAlternatives = (data.alternativeResults?.results?.length || 0) > 0;
+
+      if (hasExact) {
+        appendResultsSection('Exact Match', data.discovery?.exactModel || 'Lens identified a specific item model.');
+        renderResults(data.exactResults, { suppressBestPick: true });
+      }
+
+      if (hasAlternatives) {
+        appendResultsSection('Alternatives', 'Similar items found from vision-derived attributes.');
+        renderResults(data.alternativeResults, { suppressBestPick: !hasExact });
+      }
+    }
+
+    function renderResults(ranked, options = {}) {
       const container = document.getElementById('results');
       
       ranked.results.forEach((item, i) => {
@@ -688,7 +942,7 @@
         container.appendChild(card);
       });
 
-      if (ranked.bestPick) {
+      if (ranked.bestPick && !options.suppressBestPick) {
         document.getElementById('bestPick').innerHTML = `
           <div class="best-pick">
             <h3>🏆 Best Pick</h3>
@@ -710,6 +964,52 @@
           </div>
         `;
       }
+    }
+
+    function renderLensResults(lensResults) {
+      const container = document.getElementById('results');
+      const exact = lensResults?.exactMatches || [];
+      const visual = lensResults?.visualMatches || [];
+      const combined = [...exact, ...visual].slice(0, 12);
+
+      if (combined.length === 0) return;
+
+      combined.forEach((item, i) => {
+        const card = document.createElement('div');
+        card.className = 'result-card';
+
+        const imgHtml = item.image
+          ? `<img class="result-img" src="${item.image}" alt="${item.title || ''}" onerror="this.parentElement.innerHTML='<div class=result-img-placeholder>📦</div>'" />`
+          : '<div class="result-img-placeholder">📦</div>';
+
+        const sourceBadge = item.source === 'google_lens_exact'
+          ? '<span class="score-badge high">Lens exact</span>'
+          : '<span class="score-badge">Lens visual</span>';
+
+        card.innerHTML = `
+          <div class="result-rank">#${i + 1}</div>
+          <div class="result-img-container">${imgHtml}</div>
+          <div class="result-info">
+            <div class="result-title">${item.title || 'Lens reference'}</div>
+            <div class="result-store">
+              ${item.marketplace || 'Unknown source'}
+              ${item.url ? ` · <a href="${item.url}" target="_blank" rel="noopener">Open source ↗</a>` : ''}
+            </div>
+            <div class="scores">${sourceBadge}</div>
+            <div class="result-recommendation">Reference match surfaced by Google Lens via Bright Data. This may be inspiration content rather than a direct store listing.</div>
+          </div>
+          <div class="result-price">Lens</div>
+        `;
+
+        container.appendChild(card);
+      });
+
+      document.getElementById('bestPick').innerHTML = `
+        <div class="best-pick">
+          <h3>Lens References</h3>
+          <p>Showing the top visual references returned by Lens because the product ranker did not find strong buyable listings.</p>
+        </div>
+      `;
     }
 
     function renderMeta(data) {

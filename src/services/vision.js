@@ -1,20 +1,39 @@
 /**
  * Vision analysis — image → clothing attributes
- * Supports: Anthropic Claude (preferred), OpenAI GPT-4o, fallback
+ * Supports: Venice multimodal, Anthropic Claude, OpenAI GPT-4o, fallback
  */
 import { readFileSync } from 'fs';
 
-// Try Anthropic first, then OpenAI
+const llmProvider = (process.env.LLM_PROVIDER || '').trim().toLowerCase();
 const anthropicKey = process.env.ANTHROPIC_API_KEY?.trim();
 const openaiKey = process.env.OPENAI_API_KEY?.trim();
+const veniceKey = process.env.VENICE_API_KEY?.trim();
 
 let visionProvider = null;
+let visionApiKey = null;
+let visionBaseURL = null;
+let visionModel = null;
 let Anthropic, OpenAI;
 
-if (anthropicKey) {
+if (llmProvider === 'venice' && veniceKey) {
+  try {
+    OpenAI = (await import('openai')).default;
+    visionProvider = 'venice';
+    visionApiKey = veniceKey;
+    visionBaseURL = 'https://api.venice.ai/api/v1';
+    visionModel = process.env.VENICE_VISION_MODEL?.trim() || 'qwen3-vl-235b-a22b';
+    console.log(`👁️ Vision: Venice ${visionModel} ✅`);
+  } catch (e) {
+    console.warn('Venice/OpenAI SDK import failed:', e.message);
+  }
+}
+
+if (!visionProvider && anthropicKey) {
   try {
     Anthropic = (await import('@anthropic-ai/sdk')).default;
     visionProvider = 'anthropic';
+    visionApiKey = anthropicKey;
+    visionModel = 'claude-sonnet-4-20250514';
     console.log('👁️ Vision: Anthropic Claude ✅');
   } catch (e) {
     console.warn('Anthropic SDK import failed:', e.message);
@@ -25,7 +44,9 @@ if (!visionProvider && openaiKey) {
   try {
     OpenAI = (await import('openai')).default;
     visionProvider = 'openai';
-    console.log('👁️ Vision: OpenAI GPT-4o ✅');
+    visionApiKey = openaiKey;
+    visionModel = process.env.OPENAI_VISION_MODEL?.trim() || 'gpt-4o';
+    console.log(`👁️ Vision: OpenAI ${visionModel} ✅`);
   } catch (e) {
     console.warn('OpenAI SDK import failed:', e.message);
   }
@@ -75,7 +96,7 @@ export async function analyzeClothingImage(imagePath, context = {}) {
     if (visionProvider === 'anthropic') {
       return await analyzeWithAnthropic(base64Image, mimeType, contextHint);
     } else {
-      return await analyzeWithOpenAI(base64Image, mimeType, contextHint);
+      return await analyzeWithOpenAICompatible(base64Image, mimeType, contextHint);
     }
   } catch (error) {
     console.error(`Vision error (${visionProvider}):`, error.message, error.status, error.error || '');
@@ -84,10 +105,10 @@ export async function analyzeClothingImage(imagePath, context = {}) {
 }
 
 async function analyzeWithAnthropic(base64Image, mimeType, contextHint) {
-  const client = new Anthropic({ apiKey: anthropicKey });
+  const client = new Anthropic({ apiKey: visionApiKey });
 
   const response = await client.messages.create({
-    model: 'claude-sonnet-4-20250514',
+    model: visionModel,
     max_tokens: 1000,
     messages: [
       {
@@ -110,11 +131,14 @@ async function analyzeWithAnthropic(base64Image, mimeType, contextHint) {
   return parseVisionResponse(text);
 }
 
-async function analyzeWithOpenAI(base64Image, mimeType, contextHint) {
-  const client = new OpenAI({ apiKey: openaiKey });
+async function analyzeWithOpenAICompatible(base64Image, mimeType, contextHint) {
+  const client = new OpenAI({
+    apiKey: visionApiKey,
+    ...(visionBaseURL ? { baseURL: visionBaseURL } : {}),
+  });
 
-  const response = await client.chat.completions.create({
-    model: 'gpt-4o',
+  const request = {
+    model: visionModel,
     max_tokens: 1000,
     messages: [
       {
@@ -122,7 +146,7 @@ async function analyzeWithOpenAI(base64Image, mimeType, contextHint) {
         content: [
           {
             type: 'text',
-            text: `${VISION_PROMPT}${contextHint}`,
+            text: `${VISION_PROMPT}${contextHint}\n\nReturn ONLY valid JSON, no markdown.`,
           },
           {
             type: 'image_url',
@@ -131,8 +155,13 @@ async function analyzeWithOpenAI(base64Image, mimeType, contextHint) {
         ],
       },
     ],
-    response_format: { type: 'json_object' },
-  });
+  };
+
+  if (visionProvider === 'openai') {
+    request.response_format = { type: 'json_object' };
+  }
+
+  const response = await client.chat.completions.create(request);
 
   const text = response.choices[0].message.content;
   return parseVisionResponse(text);

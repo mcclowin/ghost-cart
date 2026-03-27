@@ -17,6 +17,9 @@ import { apiKeyAuth } from './middleware/auth.js';
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// Respect x-forwarded-* headers from ngrok/reverse proxies when building public URLs.
+app.set('trust proxy', true);
+
 // Rate limiting
 const globalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -53,6 +56,7 @@ app.use(express.json());
 
 // Serve static frontend
 app.use(express.static('public'));
+app.use('/uploads', express.static(resolve(process.cwd(), 'media', 'uploads')));
 
 // API key auth for all /api/* routes (skipped when GHOSTCART_API_KEY is unset)
 app.use('/api', apiKeyAuth);

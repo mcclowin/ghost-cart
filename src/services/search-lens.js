@@ -13,6 +13,21 @@
  * @returns {Array} Product matches with URLs, prices, store names
  */
 export async function searchGoogleLens(imageUrl, options = {}) {
+  const provider = options.provider || process.env.LENS_PROVIDER || 'serpapi';
+
+  if (!imageUrl) {
+    console.warn('   ⚠️ Google Lens needs a public image URL — skipping');
+    return { exactMatches: [], visualMatches: [] };
+  }
+
+  if (provider === 'brightdata_url') {
+    return searchBrightDataLens(imageUrl, options);
+  }
+
+  if (provider === 'none') {
+    return { exactMatches: [], visualMatches: [] };
+  }
+
   const apiKey = process.env.SERPAPI_KEY;
   if (!apiKey) {
     console.warn('⚠️ SERPAPI_KEY not set — skipping Google Lens');
@@ -71,6 +86,227 @@ export async function searchGoogleLens(imageUrl, options = {}) {
   }
 }
 
+const LENS_STOP_WORDS = new Set([
+  'a', 'an', 'and', 'avant', 'buy', 'boutiques', 'by', 'collection', 'collections',
+  'con', 'de', 'el', 'en', 'for', 'from', 'high', 'herren', 'in', 'instagram', 'low',
+  'men', 'mid', 'new', 'of', 'on', 'pour', 'primavera', 'printemps', 'reel', 'selling',
+  'sneaker', 'sneakers', 'spring', 'summer', 'the', 'top', 'tops', 'vintage', 'with',
+  'women',
+]);
+
+const PRODUCT_HOST_BONUS = [
+  /goat\.com/i,
+  /stockx\.com/i,
+  /novelship/i,
+  /farfetch/i,
+  /grailed/i,
+  /vestiaire/i,
+  /ebay\./i,
+  /maisonmargiela/i,
+];
+
+const SOCIAL_HOST_PENALTY = [
+  /instagram\.com/i,
+  /youtube\.com/i,
+  /reddit\.com/i,
+  /pinterest\./i,
+  /facebook\.com/i,
+];
+
+const COLOR_TERMS = [
+  'triple black', 'triple white', 'black', 'white', 'grey', 'gray', 'silver',
+  'cream', 'beige', 'brown', 'tan', 'red', 'blue', 'green', 'yellow', 'pink',
+  'purple', 'orange', 'burgundy', 'gold', 'navy',
+];
+
+function lensTokens(text) {
+  return String(text || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .split(/\s+/)
+    .filter(token => token.length > 1 && !LENS_STOP_WORDS.has(token));
+}
+
+function titleSpecificityScore(title) {
+  const tokens = lensTokens(title);
+  if (tokens.length < 2) return 0;
+  let score = Math.min(tokens.length, 8);
+  if (/\b[a-z]\d{2,}[a-z0-9-]*\b/i.test(title)) score += 3;
+  if (/['"]/i.test(title)) score += 1;
+  return score;
+}
+
+function normaliseLensTitle(title) {
+  return String(title || '')
+    .replace(/^buy\s+/i, '')
+    .replace(/\s+-\s+[A-Z0-9-]+(?:\s*\.\.\.)?$/i, '')
+    .replace(/\s*\.\.\.$/, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function canonicaliseExactTitle(title) {
+  return String(title || '')
+    .replace(/^buy\s+/i, '')
+    .replace(/['"]+/g, ' ')
+    .replace(/\b(?:men|women|man|woman|mens|womens)\b/ig, ' ')
+    .replace(/\b(?:us|uk|eu)\s*\d{1,2}(?:\.\d+)?\b/ig, ' ')
+    .replace(/\b\d{1,2}(?:\.\d+)?\b/g, ' ')
+    .replace(/\b(?:leather|rubber|cotton|calf|suede|canvas)\b/ig, ' ')
+    .replace(/\b(?:shoe|shoes|sneaker|sneakers|trainer|trainers)\b/ig, ' ')
+    .replace(/\blow top\b/ig, 'low')
+    .replace(/\bhigh top\b/ig, 'high-top')
+    .replace(/\s+-\s+[A-Z0-9-]+(?:\s*\.\.\.)?$/i, '')
+    .replace(/\s*\.\.\.$/, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function overlapScore(a, b) {
+  const aTokens = new Set(lensTokens(a));
+  const bTokens = new Set(lensTokens(b));
+  if (aTokens.size === 0 || bTokens.size === 0) return 0;
+  let matches = 0;
+  for (const token of aTokens) {
+    if (bTokens.has(token)) matches += 1;
+  }
+  return matches / Math.max(aTokens.size, bTokens.size);
+}
+
+function extractColors(text) {
+  const lower = String(text || '').toLowerCase();
+  return COLOR_TERMS.filter(color => lower.includes(color));
+}
+
+function stripColorTerms(text) {
+  let value = String(text || '');
+  for (const color of [...COLOR_TERMS].sort((a, b) => b.length - a.length)) {
+    const pattern = new RegExp(`\\b${color.replace(/\s+/g, '\\s+')}\\b`, 'ig');
+    value = value.replace(pattern, ' ');
+  }
+  return value.replace(/\s+/g, ' ').trim();
+}
+
+function getVisionColors(visionItem) {
+  const raw = visionItem?.color;
+  if (Array.isArray(raw)) return raw.map(value => String(value || '').toLowerCase()).filter(Boolean);
+  if (raw) return [String(raw).toLowerCase()];
+  return [];
+}
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function shouldRetryBrightDataError(status, message) {
+  if (status >= 500) return true;
+  return /unknown_proxy_error|proxy request failed|econnrefused|timed out|socket hang up/i.test(message || '');
+}
+
+function chooseClusterColor(cluster, visionItem) {
+  const colorScores = new Map();
+
+  for (const [index, item] of cluster.entries()) {
+    const position = Number(item.lensPosition || (index + 1));
+    const positionalWeight = Math.max(1, 12 - Math.min(position, 12));
+    const sourceWeight = item.source === 'google_lens_exact' ? 5 : 3;
+    const productWeight = isProductLikeLensCandidate(item) ? 4 : 0;
+    const weight = positionalWeight + sourceWeight + productWeight;
+
+    for (const color of extractColors(`${item.title} ${item.url}`)) {
+      const specificityWeight = color.includes(' ') ? 3 : 1;
+      colorScores.set(color, (colorScores.get(color) || 0) + weight + specificityWeight);
+    }
+  }
+
+  const rankedColors = [...colorScores.entries()].sort((a, b) => b[1] - a[1] || b[0].length - a[0].length);
+  const lensPreferred = rankedColors[0]?.[0] || null;
+  if (lensPreferred) {
+    return lensPreferred;
+  }
+
+  const visionColors = getVisionColors(visionItem);
+  return visionColors[0] || null;
+}
+
+function isProductLikeLensCandidate(item) {
+  const url = String(item.url || '');
+  const title = String(item.title || '');
+  if (!url || !title) return false;
+  if (SOCIAL_HOST_PENALTY.some(pattern => pattern.test(url))) return false;
+  if (/\/search|\/collections|\/category|\/ideas\//i.test(url)) return false;
+  if (/\/itm\/|\/dp\/|\/product\/|\/products\/|\/sneakers\/|sku|stylecode|s\d{2,}/i.test(url)) return true;
+  return PRODUCT_HOST_BONUS.some(pattern => pattern.test(url));
+}
+
+export function inferLensExactMatch(lensResults = {}, visionItem = null) {
+  const candidates = [...(lensResults.exactMatches || []), ...(lensResults.visualMatches || [])]
+    .map(item => ({
+      ...item,
+      title: normaliseLensTitle(item.title),
+    }))
+    .filter(item => item.title && item.url);
+
+  const productLike = candidates.filter(isProductLikeLensCandidate);
+  const pool = productLike.length > 0 ? productLike : candidates;
+  if (pool.length === 0) return null;
+
+  const ranked = pool
+    .map((item, index) => {
+      const support = pool.reduce((count, other) => (
+        overlapScore(item.title, other.title) >= 0.45 ? count + 1 : count
+      ), 0);
+      const sourceWeight = item.source === 'google_lens_exact' ? 5 : 3;
+      const specificity = titleSpecificityScore(item.title);
+      const position = Number(item.lensPosition || (index + 1));
+      const positionalWeight = Math.max(0, 10 - Math.min(position, 10)) / 2;
+      const productWeight = isProductLikeLensCandidate(item) ? 6 : 0;
+      return {
+        ...item,
+        support,
+        score: (support * 4) + sourceWeight + specificity + positionalWeight + productWeight,
+      };
+    })
+    .sort((a, b) => b.score - a.score || b.support - a.support);
+
+  const winner = ranked[0];
+  if (!winner) return null;
+
+  if (winner.support < 2 && winner.score < 18) {
+    return null;
+  }
+
+  const cluster = pool.filter(item => overlapScore(winner.title, item.title) >= 0.45);
+  const preferredColor = chooseClusterColor(cluster, visionItem);
+  const rankedQueryCandidates = cluster
+    .map(item => {
+      const canonicalTitle = canonicaliseExactTitle(item.title);
+      let score = titleSpecificityScore(canonicalTitle);
+      if (item.source === 'google_lens_exact') score += 4;
+      if (isProductLikeLensCandidate(item)) score += 4;
+      if (/triple black|triple white/i.test(item.title)) score += 6;
+      if (/[A-Z]\d{2,}|S\d{2,}/.test(item.title)) score += 3;
+      return { item, canonicalTitle, score };
+    })
+    .filter(entry => entry.canonicalTitle)
+    .sort((a, b) => b.score - a.score);
+
+  const chosenQueryTitle = rankedQueryCandidates[0]?.canonicalTitle || canonicaliseExactTitle(winner.title);
+  const modelCore = stripColorTerms(chosenQueryTitle);
+  const exactModel = preferredColor && !new RegExp(`\\b${preferredColor.replace(/\s+/g, '\\s+')}\\b`, 'i').test(modelCore)
+    ? `${modelCore} ${preferredColor}`.trim()
+    : modelCore;
+
+  return {
+    exactModel,
+    exactSearchQuery: exactModel,
+    confidence: winner.support >= 3 ? 'high' : 'medium',
+    rationale: `Lens consensus selected "${modelCore}" from ${winner.support} overlapping product-like hits${preferredColor ? ` and preferred color "${preferredColor}"` : ''}.`,
+    sourceUrl: winner.url,
+    support: winner.support,
+  };
+}
+
 /**
  * Search Google Lens with a local image file (uploads via data URL workaround).
  * SerpAPI requires a public URL, so we need to provide one.
@@ -92,6 +328,96 @@ export async function searchGoogleLensWithFile(imagePath, options = {}) {
 
   console.warn('   ⚠️ Google Lens needs a public image URL — skipping (no imageUrl provided)');
   return { exactMatches: [], visualMatches: [] };
+}
+
+async function searchBrightDataLens(imageUrl, options = {}) {
+  const apiKey = process.env.BRIGHTDATA_API_KEY;
+  const zone = process.env.BRIGHTDATA_ZONE || 'serp_api1';
+  const maxAttempts = Number(process.env.BRIGHTDATA_LENS_RETRIES || 3);
+  const baseDelayMs = Number(process.env.BRIGHTDATA_LENS_RETRY_DELAY_MS || 900);
+  if (!apiKey) {
+    console.warn('⚠️ BRIGHTDATA_API_KEY not set — skipping Bright Data Lens');
+    return { exactMatches: [], visualMatches: [] };
+  }
+
+  const lensUrl = new URL('https://lens.google.com/uploadbyurl');
+  lensUrl.searchParams.set('url', imageUrl);
+  lensUrl.searchParams.set('brd_json', '1');
+
+  console.log('   🔍 Google Lens: searching by image via Bright Data...');
+
+  let lastError = null;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const response = await fetch('https://api.brightdata.com/request', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          zone,
+          url: lensUrl.toString(),
+          format: 'raw',
+        }),
+      });
+
+      if (!response.ok) {
+        const body = await response.text();
+        const error = new Error(`Bright Data ${response.status}: ${body.slice(0, 240)}`);
+        error.status = response.status;
+        throw error;
+      }
+
+      const data = await response.json();
+      const exactMatches = (data.organic || [])
+        .filter(item => item.link)
+        .slice(0, options.limit || 8)
+        .map((item, index) => ({
+          title: item.title || item.source || '',
+          price: null,
+          url: item.link,
+          image: item.image_url || item.image || null,
+          marketplace: item.source || extractStoreName(item.link) || 'Unknown',
+          source: 'google_lens_exact',
+          lensPosition: item.global_rank || item.rank || index + 1,
+        }));
+
+      const visualMatches = (data.images || [])
+        .filter(item => item.link)
+        .slice(0, options.visualLimit || 12)
+        .map((item, index) => ({
+          title: item.title || item.source || '',
+          price: null,
+          url: item.link,
+          image: normaliseImageUrl(item.image),
+          marketplace: item.source || extractStoreName(item.link) || 'Unknown',
+          source: 'google_lens_visual',
+          lensPosition: item.global_rank || item.rank || index + 1,
+        }));
+
+      console.log(`   → Lens: ${exactMatches.length} exact, ${visualMatches.length} visual`);
+      return { exactMatches, visualMatches };
+    } catch (error) {
+      lastError = error;
+      const retryable = shouldRetryBrightDataError(error.status || 0, error.message || '');
+      if (!retryable || attempt === maxAttempts) {
+        break;
+      }
+
+      const delayMs = baseDelayMs * attempt;
+      console.warn(`   ↻ Bright Data Lens retry ${attempt}/${maxAttempts - 1} in ${delayMs}ms: ${error.message}`);
+      await sleep(delayMs);
+    }
+  }
+
+  console.error('Google Lens error (Bright Data):', lastError?.message || 'Unknown error');
+  return { exactMatches: [], visualMatches: [] };
+}
+
+function normaliseImageUrl(value) {
+  if (!value || typeof value !== 'string') return null;
+  return value.startsWith('http') ? value : null;
 }
 
 

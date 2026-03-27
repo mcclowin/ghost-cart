@@ -359,6 +359,93 @@ Return JSON only:
   return parseJsonContent(response.choices[0].message.content, 'query parsing');
 }
 
+export async function reconcileImageDiscovery(input = {}) {
+  const visionItem = input.vision?.items?.[0] || null;
+  const lensCandidates = [
+    ...(input.lensResults?.exactMatches || []),
+    ...(input.lensResults?.visualMatches || []),
+  ]
+    .map(item => ({
+      title: String(item.title || '').trim(),
+      marketplace: item.marketplace || null,
+      position: item.lensPosition || null,
+    }))
+    .filter(item => item.title)
+    .slice(0, 12);
+  const lensTitles = lensCandidates.map(item => item.title);
+
+  const fallbackAlternative = visionItem?.search_query
+    || String(input.caption || '').trim()
+    || 'clothing';
+
+  if (!hasValidKey || lensTitles.length === 0) {
+    return {
+      hasExactModel: false,
+      exactModel: null,
+      exactSearchQuery: null,
+      confidence: 'low',
+      alternativeSearchQuery: fallbackAlternative,
+      rationale: lensTitles.length === 0
+        ? 'No usable Lens titles were available'
+        : 'LLM unavailable, so exact model reconciliation was skipped',
+    };
+  }
+
+  console.log(`   🧩 Reconciling Lens + vision via ${provider}...`);
+  const response = await llm.chat.completions.create({
+    model,
+    messages: [
+      {
+        role: 'system',
+        content: `You reconcile image discovery results for shopping.
+
+Use Lens titles and vision attributes together.
+
+Rules:
+- Lens is the source of truth for exact product identification.
+- Vision is only for broad attributes and alternatives.
+- If Lens strongly indicates a specific product model, return hasExactModel=true.
+- Only set hasExactModel=true when the model is specific enough to search stock for the same item.
+- For footwear, exact models like "Nike Air Force 1 '07" or "Nike Court Vision Low" qualify.
+- If Lens titles repeatedly point to the same branded model, you should still set hasExactModel=true even when vision disagrees.
+- Vision must not veto a strong Lens identification.
+- Only set hasExactModel=false when Lens itself is too noisy or conflicting to support one model.
+- alternativeSearchQuery should always stay broad enough to find similar items.
+- exactSearchQuery should be concise and stock-oriented, e.g. "Nike Air Force 1 '07 black".
+
+Return JSON only:
+{
+  "hasExactModel": true,
+  "exactModel": "Nike Air Force 1 '07",
+  "exactSearchQuery": "Nike Air Force 1 '07 black",
+  "confidence": "high",
+  "alternativeSearchQuery": "Nike black leather low-top sneaker minimalist",
+  "rationale": "Lens titles repeatedly point to Air Force 1 '07 while vision confirms black low-top Nike sneaker."
+}`
+      },
+      {
+        role: 'user',
+        content: JSON.stringify({
+          caption: input.caption || '',
+          vision: visionItem,
+          lensCandidates,
+        }),
+      },
+    ],
+    response_format: { type: 'json_object' },
+  });
+
+  const reconciled = parseJsonContent(response.choices[0].message.content, 'image discovery reconciliation');
+  return {
+    hasExactModel: Boolean(reconciled.hasExactModel && reconciled.exactSearchQuery),
+    exactModel: reconciled.exactModel || null,
+    exactSearchQuery: reconciled.exactSearchQuery || null,
+    confidence: reconciled.confidence || 'low',
+    alternativeSearchQuery: reconciled.alternativeSearchQuery || fallbackAlternative,
+    rationale: reconciled.rationale || null,
+  };
+}
+
 /**
  * Validate and rank search results
  */
