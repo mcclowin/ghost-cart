@@ -186,6 +186,17 @@ function isLikelyProductUrl(url) {
   return /\/itm\/|\/dp\/|\/product\/|\/products\/|\/sneakers\/|sku|stylecode|goat|stockx|novelship|farfetch|maisonmargiela|ssense/i.test(value);
 }
 
+const RESALE_DOMAINS = /\b(ebay|depop|vinted|poshmark|therealreal|vestiairecollective|thredup|grailed|mercari|tradesy)\b/i;
+const USED_KEYWORDS = /\bpre[- ]?owned\b|\bused\b|\bvintage\b|\bsecondhand\b|\bsecond[- ]hand\b/i;
+
+function isUsedProduct(item) {
+  const url = String(item.url || '');
+  const title = String(item.title || '');
+  if (RESALE_DOMAINS.test(url)) return true;
+  if (USED_KEYWORDS.test(title)) return true;
+  return false;
+}
+
 function scoreExactCandidate(item, constraints) {
   const haystack = `${item.title || ''} ${item.snippet || ''} ${item.url || ''}`.toLowerCase();
   let score = 40;
@@ -217,6 +228,7 @@ function scoreExactCandidate(item, constraints) {
 
 function rankExactCandidates(results, constraints) {
   const ranked = results
+    .filter(item => !isUsedProduct(item))
     .map(item => {
       const overallScore = scoreExactCandidate(item, constraints);
       return {
