@@ -371,7 +371,7 @@ export async function reconcileImageDiscovery(input = {}) {
       position: item.lensPosition || null,
     }))
     .filter(item => item.title)
-    .slice(0, 12);
+    .slice(0, 20);
   const lensTitles = lensCandidates.map(item => item.title);
 
   const fallbackAlternative = visionItem?.search_query
@@ -399,19 +399,20 @@ export async function reconcileImageDiscovery(input = {}) {
         role: 'system',
         content: `You reconcile image discovery results for shopping.
 
-Use Lens titles and vision attributes together.
+You receive Google Lens results (product titles from visual search) and vision analysis (attributes detected from the image). Your job is to identify the exact product.
 
 Rules:
 - Lens is the source of truth for exact product identification.
 - Vision is only for broad attributes and alternatives.
+- CRITICAL: Distinguish real brands/designers (Nike, Prada, Adidas, Zara, etc.) from reseller/boutique store names (Harry and Zoe, Sneak in Peace, KershKicks, etc.). A store name is NOT the product brand. If even ONE Lens title mentions a known brand/designer, prioritise that over store names that appear more frequently.
 - If Lens strongly indicates a specific product model, return hasExactModel=true.
 - Only set hasExactModel=true when the model is specific enough to search stock for the same item.
-- For footwear, exact models like "Nike Air Force 1 '07" or "Nike Court Vision Low" qualify.
+- For footwear, exact models like "Nike Air Force 1 '07" or "Nike Court Vision Low" qualify. For clothing, "Prada Re-Nylon hooded jacket" qualifies.
 - If Lens titles repeatedly point to the same branded model, you should still set hasExactModel=true even when vision disagrees.
 - Vision must not veto a strong Lens identification.
 - Only set hasExactModel=false when Lens itself is too noisy or conflicting to support one model.
 - alternativeSearchQuery should always stay broad enough to find similar items.
-- exactSearchQuery should be concise and stock-oriented, e.g. "Nike Air Force 1 '07 black".
+- exactSearchQuery should be concise and stock-oriented, including the brand, model, and color/colorway from the Lens titles, e.g. "Nike Air Force 1 '07 black" or "Prada Re-Nylon hooded jacket navy".
 
 Return JSON only:
 {

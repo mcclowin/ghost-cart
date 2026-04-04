@@ -427,13 +427,22 @@ router.post('/search-image', upload.single('image'), async (req, res) => {
       console.log(`   👁️ Vision: failed, using caption fallback → "${searchQuery}"`);
     }
     console.log('🧩 Step 3: Reconciling discovery...');
-    const lensConsensus = inferLensExactMatch(lensResults, primaryItem);
-    const discovery = lensConsensus || await reconcileImageDiscovery({
+    // LLM reconciliation is the primary path — it can read all Lens titles
+    // and understand brand vs reseller names. Heuristic is fallback only.
+    const discovery = await reconcileImageDiscovery({
       caption: caption || '',
       vision,
       lensResults,
     }).catch(err => {
-      console.error('Discovery reconciliation failed:', err.message);
+      console.error('Discovery reconciliation failed, falling back to heuristic:', err.message);
+      // Fallback: use heuristic consensus if LLM fails
+      const heuristicResult = inferLensExactMatch(lensResults, primaryItem);
+      if (heuristicResult) {
+        heuristicResult.hasExactModel = true;
+        heuristicResult.alternativeSearchQuery = searchQuery;
+        heuristicResult.source = 'lens_heuristic_fallback';
+        return heuristicResult;
+      }
       return {
         hasExactModel: false,
         exactModel: null,
@@ -444,10 +453,8 @@ router.post('/search-image', upload.single('image'), async (req, res) => {
       };
     });
 
-    if (lensConsensus) {
-      discovery.hasExactModel = true;
+    if (!discovery.alternativeSearchQuery) {
       discovery.alternativeSearchQuery = searchQuery;
-      discovery.source = 'lens_consensus';
     }
 
     if (discovery.hasExactModel) {
