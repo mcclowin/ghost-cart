@@ -494,7 +494,7 @@ export async function rankResults(query, results, parsed = {}) {
     });
   }
 
-  ranked.sort((a, b) => b.overallScore - a.overallScore || b.relevanceScore - a.relevanceScore || a.price.localeCompare?.(b.price || '') || 0);
+  ranked.sort((a, b) => b.overallScore - a.overallScore || b.relevanceScore - a.relevanceScore || (a.price || '').localeCompare?.(b.price || '') || 0);
 
   const topResults = ranked.slice(0, MAX_RANKED_RESULTS).map((item, index) => ({
     rank: index + 1,
