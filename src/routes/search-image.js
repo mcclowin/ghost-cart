@@ -377,7 +377,22 @@ async function runShoppingBranch(label, searchQuery, minimumResults = MIN_IMAGE_
     directResults = shoppingResults.filter(r => r.isDirect);
     shoppingProducts = [...shoppingProducts, ...directResults];
 
-    // Fallback to Tavily resolution if no offers found
+    // Include Lens product URLs — these are direct links to real stores
+    if (options.lensProducts?.length > 0) {
+      const lensAsProducts = options.lensProducts.map(item => ({
+        marketplace: item.marketplace || 'Unknown',
+        title: item.title || '',
+        price: item.price || null,
+        url: item.url,
+        image: item.image || null,
+        source: 'google_lens',
+        condition: 'New',
+      }));
+      console.log(`   🔍 ${label}: adding ${lensAsProducts.length} Lens product URLs`);
+      shoppingProducts = [...shoppingProducts, ...lensAsProducts];
+    }
+
+    // Fallback to Tavily resolution if still nothing
     if (shoppingProducts.length === 0) {
       const needsResolution = shoppingResults.filter(r => !r.isDirect);
       if (needsResolution.length > 0) {
@@ -520,10 +535,17 @@ router.post('/search-image', upload.single('image'), async (req, res) => {
     console.log(`   🧭 Alternatives query → "${discovery.alternativeSearchQuery}"`);
 
     console.log('🏪 Step 4: Exact match + alternatives searches...');
+    // Pass Lens results to exact branch — they have direct product URLs
+    const lensProductUrls = [
+      ...(lensResults.exactMatches || []),
+      ...(lensResults.visualMatches || []),
+    ].filter(item => item.url && !/instagram|youtube|reddit|pinterest|facebook|tiktok/i.test(item.url));
+
     const exactPromise = discovery.hasExactModel && discovery.exactSearchQuery
       ? runShoppingBranch('Exact match search', discovery.exactSearchQuery, 4, {
         exactMode: true,
         disableBackfill: true,
+        lensProducts: lensProductUrls,
       })
       : Promise.resolve(null);
     const alternativePromise = runShoppingBranch('Alternatives search', discovery.alternativeSearchQuery || searchQuery, 3);
