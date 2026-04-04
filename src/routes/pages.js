@@ -55,12 +55,13 @@ function renderResultsPage(data) {
   // Product identification — prefer LLM discovery over vision
   const identifiedItem = discovery.exactModel || [primary.color, primary.brand, primary.item_type].filter(Boolean).join(' ') || 'Clothing Item';
 
-  // Hero image — best image from Lens results (the actual identified item)
+  // Hero image — top exact match product image, falling back to first Lens image
+  const topExactImage = exactResults.find(r => r.image)?.image || null;
   const lensImages = [
     ...(lensData.exactMatches || []),
     ...(lensData.visualMatches || []),
   ].map(m => m.image).filter(Boolean);
-  const heroImage = lensImages[0] || null;
+  const heroImage = topExactImage || lensImages[0] || null;
 
   const ogImageUrl = '/images/kaboom-og.svg';
 
@@ -68,18 +69,16 @@ function renderResultsPage(data) {
     const priceHtml = r.price ? `<span class="price">${r.price}</span>` : '';
     const storeHtml = r.marketplace ? `<span class="store">${r.marketplace}</span>` : '';
     const imgHtml = r.image
-      ? `<img class="result-img" src="${escapeHtml(r.image)}" alt="${escapeHtml(r.title || 'Product')}" onerror="this.parentElement.innerHTML='<div class=result-img-placeholder></div>'" />`
-      : '<div class="result-img-placeholder"></div>';
+      ? `<div class="result-img-container"><img class="result-img" src="${escapeHtml(r.image)}" alt="${escapeHtml(r.title || 'Product')}" onerror="this.parentElement.style.display='none'" /></div>`
+      : '';
 
     return `
     <a href="${r.url}" target="_blank" rel="noopener" class="result-card">
       ${badge}
-      <div class="result-card-body">
-        <div class="result-img-container">${imgHtml}</div>
-        <div class="result-main">
-          <h3>${escapeHtml(r.title || 'Untitled')}</h3>
-          <div class="meta">${priceHtml} ${storeHtml}</div>
-        </div>
+      ${imgHtml}
+      <div class="result-main">
+        <h3>${escapeHtml(r.title || 'Untitled')}</h3>
+        <div class="meta">${priceHtml} ${storeHtml}</div>
       </div>
     </a>`;
   };
@@ -169,26 +168,17 @@ function renderResultsPage(data) {
     .result-card {
       display: block; text-decoration: none; color: inherit;
       background: #111; border: 1px solid #222; border-radius: 12px;
-      padding: 14px; margin-bottom: 10px;
+      overflow: hidden; margin-bottom: 12px;
       transition: border-color 0.2s;
     }
     .result-card:hover { border-color: #444; }
-    .result-card-body {
-      display: grid;
-      grid-template-columns: 72px minmax(0, 1fr);
-      gap: 12px;
-      align-items: center;
-    }
     .result-img-container {
-      width: 72px; height: 72px;
-      border-radius: 8px; overflow: hidden;
-      background: #1a1a1a; border: 1px solid #252525;
-      display: flex; align-items: center; justify-content: center;
+      width: 100%; max-height: 280px; overflow: hidden;
+      background: #1a1a1a;
     }
-    .result-img { width: 100%; height: 100%; object-fit: cover; display: block; }
-    .result-img-placeholder { width: 100%; height: 100%; background: #1a1a1a; }
-    .result-main { min-width: 0; }
-    .result-card h3 { font-size: 14px; color: #e0e0e0; margin-bottom: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .result-img { width: 100%; max-height: 280px; object-fit: cover; display: block; }
+    .result-main { padding: 14px; min-width: 0; }
+    .result-card h3 { font-size: 14px; color: #e0e0e0; margin-bottom: 3px; }
     .meta { display: flex; gap: 10px; align-items: center; }
     .price { color: #4ade80; font-weight: 700; font-size: 16px; }
     .store { color: #888; font-size: 13px; }
@@ -206,9 +196,9 @@ function renderResultsPage(data) {
     footer a { color: #555; }
     .no-results { text-align: center; padding: 40px; color: #888; }
     @media (max-width: 640px) {
-      .hero img { max-height: 360px; }
-      .result-card-body { grid-template-columns: 60px minmax(0, 1fr); gap: 10px; }
-      .result-img-container { width: 60px; height: 60px; }
+      .hero img { max-height: 320px; }
+      .result-img-container { max-height: 220px; }
+      .result-img { max-height: 220px; }
     }
   </style>
 </head>
