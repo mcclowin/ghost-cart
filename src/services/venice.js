@@ -392,6 +392,10 @@ export async function reconcileImageDiscovery(input = {}) {
   }
 
   console.log(`   🧩 Reconciling Lens + vision via ${provider}...`);
+  console.log(`   📋 Lens titles for LLM (${lensCandidates.length}):`);
+  for (const c of lensCandidates) {
+    console.log(`      ${c.position || '?'}. [${c.marketplace || '?'}] ${c.title}`);
+  }
   const response = await llm.chat.completions.create({
     model,
     messages: [
@@ -399,7 +403,7 @@ export async function reconcileImageDiscovery(input = {}) {
         role: 'system',
         content: `You reconcile image discovery results for shopping.
 
-You receive Google Lens results (product titles from visual search) and vision analysis (attributes detected from the image). Your job is to identify the exact product.
+You receive Google Lens results (product titles from visual search), Google's related searches, and vision analysis (attributes detected from the image). Your job is to identify the exact product.
 
 Rules:
 - Lens is the source of truth for exact product identification.
@@ -411,6 +415,7 @@ Rules:
 - If Lens titles repeatedly point to the same branded model, you should still set hasExactModel=true even when vision disagrees.
 - Vision must not veto a strong Lens identification.
 - Only set hasExactModel=false when Lens itself is too noisy or conflicting to support one model.
+- Pay attention to relatedSearches — Google often puts the actual brand/product name there even when product listing titles are from resellers.
 - alternativeSearchQuery should always stay broad enough to find similar items.
 - exactSearchQuery should be concise and stock-oriented, including the brand, model, and color/colorway from the Lens titles, e.g. "Nike Air Force 1 '07 black" or "Prada Re-Nylon hooded jacket navy".
 
@@ -430,6 +435,7 @@ Return JSON only:
           caption: input.caption || '',
           vision: visionItem,
           lensCandidates,
+          relatedSearches: input.lensResults?.relatedSearches || [],
         }),
       },
     ],

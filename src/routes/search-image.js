@@ -135,10 +135,13 @@ function matchesExactConstraints(item, constraints) {
   const brandMatches = constraints.brandTokens.filter(token => haystack.includes(token));
   const modelMatches = constraints.modelTokens.filter(token => haystack.includes(token));
 
+  // Brand must appear
   if (constraints.brandTokens.length > 0 && brandMatches.length === 0) {
     return false;
   }
-  if (constraints.modelTokens.length > 0 && modelMatches.length < constraints.modelTokens.length) {
+  // Require at least half of model tokens (not all — listings vary in how they describe items)
+  const minModelMatches = Math.max(1, Math.ceil(constraints.modelTokens.length / 2));
+  if (constraints.modelTokens.length > 0 && modelMatches.length < minModelMatches) {
     return false;
   }
 
@@ -351,14 +354,7 @@ async function runShoppingBranch(label, searchQuery, minimumResults = MIN_IMAGE_
     });
   }
 
-  const filteredProducts = options.exactConstraints
-    ? shoppingProducts.filter(item => matchesExactConstraints(item, options.exactConstraints))
-    : shoppingProducts;
-  if (options.exactConstraints) {
-    console.log(`   🎯 ${label}: kept ${filteredProducts.length}/${shoppingProducts.length} results after strict exact filtering`);
-  }
-
-  const ranked = filteredProducts.length > 0
+  const ranked = shoppingProducts.length > 0
     ? (options.exactMode
       ? rankExactCandidates(filteredProducts, options.exactConstraints)
       : await rankResults(searchQuery, filteredProducts, parsed))
@@ -367,7 +363,7 @@ async function runShoppingBranch(label, searchQuery, minimumResults = MIN_IMAGE_
   const rankedResults = [...(ranked.results || [])];
   if (!options.disableBackfill && rankedResults.length < minimumResults) {
     const existingUrls = new Set(rankedResults.map(item => item.url).filter(Boolean));
-    const backfill = buildBackfillCandidates(filteredProducts, parsed, existingUrls, minimumResults);
+    const backfill = buildBackfillCandidates(shoppingProducts, parsed, existingUrls, minimumResults);
     if (backfill.length > 0) {
       console.log(`   ↪ ${label}: backfilled ${backfill.length} extra shopping candidates`);
       rankedResults.push(...backfill);
@@ -465,20 +461,18 @@ router.post('/search-image', upload.single('image'), async (req, res) => {
     console.log(`   🧭 Alternatives query → "${discovery.alternativeSearchQuery}"`);
 
     console.log('🏪 Step 4: Exact match + alternatives searches...');
-    const exactConstraints = buildExactConstraints(discovery);
     const exactPromise = discovery.hasExactModel && discovery.exactSearchQuery
       ? runShoppingBranch('Exact match search', discovery.exactSearchQuery, 4, {
-        exactConstraints,
         exactMode: true,
         disableBackfill: true,
       })
       : Promise.resolve(null);
-    const alternativePromise = runShoppingBranch('Alternatives search', discovery.alternativeSearchQuery || searchQuery, MIN_IMAGE_RESULTS);
+    const alternativePromise = runShoppingBranch('Alternatives search', discovery.alternativeSearchQuery || searchQuery, 3);
 
     const [exactBranch, alternativesBranch] = await Promise.all([exactPromise, alternativePromise]);
 
     if (exactBranch && (!exactBranch.ranked.results || exactBranch.ranked.results.length === 0)) {
-      const exactLensFallback = buildExactLensFallback(lensResults, exactConstraints);
+      const exactLensFallback = buildExactLensFallback(lensResults, null);
       if (exactLensFallback.results.length > 0) {
         console.log(`   ↪ Exact match search: using ${exactLensFallback.results.length} direct Lens fallback hits`);
         exactBranch.ranked = exactLensFallback;

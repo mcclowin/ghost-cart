@@ -427,8 +427,17 @@ async function searchBrightDataLens(imageUrl, options = {}) {
           lensPosition: item.global_rank || item.rank || index + 1,
         }));
 
+      // Capture related searches — Google often puts the actual brand/product here
+      const relatedSearches = (data.related_search || [])
+        .map(item => item.title)
+        .filter(Boolean)
+        .slice(0, 10);
+      if (relatedSearches.length > 0) {
+        console.log(`   → Lens related searches: ${relatedSearches.join(', ')}`);
+      }
+
       console.log(`   → Lens: ${exactMatches.length} exact, ${visualMatches.length} visual`);
-      return { exactMatches, visualMatches };
+      return { exactMatches, visualMatches, relatedSearches };
     } catch (error) {
       lastError = error;
       const retryable = shouldRetryBrightDataError(error.status || 0, error.message || '');
