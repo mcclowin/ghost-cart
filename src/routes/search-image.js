@@ -366,10 +366,13 @@ async function runShoppingBranch(label, searchQuery, minimumResults = MIN_IMAGE_
     });
   }
 
-  const ranked = shoppingProducts.length > 0
-    ? (options.exactMode
-      ? rankExactCandidates(shoppingProducts, null)
-      : await rankResults(searchQuery, shoppingProducts, parsed))
+  // Filter used products from exact matches
+  const candidates = options.exactMode
+    ? shoppingProducts.filter(item => !isUsedProduct(item))
+    : shoppingProducts;
+
+  const ranked = candidates.length > 0
+    ? await rankResults(searchQuery, candidates, parsed)
     : { results: [], bestPick: 'No results found', filtered: [] };
 
   const rankedResults = [...(ranked.results || [])];
