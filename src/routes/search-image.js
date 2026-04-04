@@ -418,13 +418,8 @@ router.post('/search-image', upload.single('image'), async (req, res) => {
       discovery,
       exact: exactBranch ? {
         query: exactBranch.query,
-        parsed: exactBranch.parsed,
         ranked: exactBranch.ranked,
-        sourceCounts: {
-          googleShopping: exactBranch.shoppingResults.length,
-          directUrls: exactBranch.directResults.length,
-          resolvedUrls: exactBranch.resolvedResults.length,
-        },
+        source: 'lens_direct',
       } : null,
       alternatives: {
         query: alternativesBranch.query,
