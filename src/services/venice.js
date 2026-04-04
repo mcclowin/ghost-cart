@@ -412,7 +412,8 @@ Rules:
 - Only set hasExactModel=false when Lens itself is too noisy or conflicting to support one model.
 - Pay attention to relatedSearches — Google often puts the actual brand/product name there even when product listing titles are from resellers.
 - alternativeSearchQuery should always stay broad enough to find similar items.
-- exactSearchQuery should be concise and stock-oriented, including the brand, model, and color/colorway from the Lens titles, e.g. "Nike Air Force 1 '07 black" or "Prada Re-Nylon hooded jacket navy".
+- CRITICAL: exactSearchQuery MUST include the exact colorway name from the Lens titles, not a generic color. If Lens says "Rich Oak/Bisque/Pecan", use "Rich Oak Bisque Pecan" — do NOT simplify to "brown". If Lens says "Vanilla Ice", use "Vanilla Ice" — do NOT simplify to "white". Colorway names are how products are listed in stores.
+- exactSearchQuery should be concise and stock-oriented: brand + model + exact colorway name. E.g. "New Balance 740 Rich Oak Bisque Pecan" or "Nike Air Force 1 '07 Triple Black".
 
 Return JSON only:
 {
