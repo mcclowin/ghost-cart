@@ -16,7 +16,7 @@ import { unlink } from 'fs/promises';
 import { extname } from 'path';
 import { analyzeClothingImage } from '../services/vision.js';
 import { parseQuery, rankResults, reconcileImageDiscovery } from '../services/venice.js';
-import { searchGoogleShopping } from '../services/search-serp.js';
+import { searchGoogleShopping, getProductOffers } from '../services/search-serp.js';
 import { resolveShoppingResults } from '../services/search-web.js';
 import { inferLensExactMatch, searchGoogleLens } from '../services/search-lens.js';
 import { saveResult } from '../services/results-store.js';
@@ -349,16 +349,55 @@ async function runShoppingBranch(label, searchQuery, minimumResults = MIN_IMAGE_
     limit: 20,
   });
 
-  const directResults = shoppingResults.filter(r => r.isDirect);
-  const needsResolution = shoppingResults.filter(r => !r.isDirect);
-
+  let shoppingProducts = [];
+  let directResults = [];
   let resolvedResults = [];
-  if (needsResolution.length > 0) {
-    console.log(`🔗 ${label}: resolving ${needsResolution.length} URLs...`);
-    resolvedResults = await resolveShoppingResults(needsResolution, SHOPPING_RESOLUTION_LIMIT, { query: primarySearch });
+
+  if (options.exactMode && shoppingResults.length > 0) {
+    // ── Exact mode: use SerpAPI Product Offers for real store URLs ──
+    // Pick top results with pageTokens and get actual store links
+    const withTokens = shoppingResults.filter(r => r.pageToken).slice(0, 6);
+    if (withTokens.length > 0) {
+      console.log(`🏷️ ${label}: fetching real store URLs for ${withTokens.length} products...`);
+      const offerBatches = await Promise.all(
+        withTokens.map(async (item) => {
+          const offers = await getProductOffers(item.pageToken);
+          return offers.map(offer => ({
+            ...offer,
+            image: offer.image || item.image || null,
+          }));
+        })
+      );
+      const allOffers = offerBatches.flat();
+      console.log(`   → Got ${allOffers.length} store offers with direct URLs`);
+      shoppingProducts = allOffers;
+    }
+
+    // Also include any direct URLs from the original results
+    directResults = shoppingResults.filter(r => r.isDirect);
+    shoppingProducts = [...shoppingProducts, ...directResults];
+
+    // Fallback to Tavily resolution if no offers found
+    if (shoppingProducts.length === 0) {
+      const needsResolution = shoppingResults.filter(r => !r.isDirect);
+      if (needsResolution.length > 0) {
+        console.log(`🔗 ${label}: no product offers, falling back to URL resolution...`);
+        resolvedResults = await resolveShoppingResults(needsResolution, SHOPPING_RESOLUTION_LIMIT, { query: primarySearch });
+        shoppingProducts = [...directResults, ...resolvedResults];
+      }
+    }
+  } else {
+    // ── Alternatives mode: use Tavily resolution as before ──
+    directResults = shoppingResults.filter(r => r.isDirect);
+    const needsResolution = shoppingResults.filter(r => !r.isDirect);
+
+    if (needsResolution.length > 0) {
+      console.log(`🔗 ${label}: resolving ${needsResolution.length} URLs...`);
+      resolvedResults = await resolveShoppingResults(needsResolution, SHOPPING_RESOLUTION_LIMIT, { query: primarySearch });
+    }
+    shoppingProducts = [...directResults, ...resolvedResults];
   }
 
-  const shoppingProducts = [...directResults, ...resolvedResults];
   if (shoppingProducts.length === 0 && shoppingResults.length > 0) {
     console.log(`   ⚠️ ${label}: using raw Google Shopping fallback`);
     shoppingResults.slice(0, 8).forEach(r => {
@@ -366,10 +405,15 @@ async function runShoppingBranch(label, searchQuery, minimumResults = MIN_IMAGE_
     });
   }
 
-  // Filter used products from exact matches
-  const candidates = options.exactMode
-    ? shoppingProducts.filter(item => !isUsedProduct(item))
-    : shoppingProducts;
+  // Filter used products from exact matches, deduplicate
+  const seen = new Set();
+  const candidates = shoppingProducts
+    .filter(item => {
+      if (!item?.url || seen.has(item.url)) return false;
+      seen.add(item.url);
+      return true;
+    })
+    .filter(item => options.exactMode ? !isUsedProduct(item) : true);
 
   const ranked = candidates.length > 0
     ? await rankResults(searchQuery, candidates, parsed)
