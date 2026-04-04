@@ -353,9 +353,19 @@ async function runShoppingBranch(label, searchQuery, minimumResults = MIN_IMAGE_
   let directResults = [];
   let resolvedResults = [];
 
-  if (options.exactMode && shoppingResults.length > 0) {
-    // ── Exact mode: use SerpAPI Product Offers for real store URLs ──
-    // Pick top results with pageTokens and get actual store links
+  // ── Always resolve shopping results via Tavily ──
+  directResults = shoppingResults.filter(r => r.isDirect);
+  const needsResolution = shoppingResults.filter(r => !r.isDirect);
+
+  if (needsResolution.length > 0) {
+    console.log(`🔗 ${label}: resolving ${needsResolution.length} URLs...`);
+    resolvedResults = await resolveShoppingResults(needsResolution, SHOPPING_RESOLUTION_LIMIT, { query: primarySearch });
+  }
+  shoppingProducts = [...directResults, ...resolvedResults];
+
+  // ── Exact mode: also try Product Offers + Lens URLs as bonus candidates ──
+  if (options.exactMode) {
+    // Try SerpAPI Product Offers for real store URLs
     const withTokens = shoppingResults.filter(r => r.pageToken).slice(0, 6);
     if (withTokens.length > 0) {
       console.log(`🏷️ ${label}: fetching real store URLs for ${withTokens.length} products...`);
@@ -369,60 +379,29 @@ async function runShoppingBranch(label, searchQuery, minimumResults = MIN_IMAGE_
         })
       );
       const allOffers = offerBatches.flat();
-      console.log(`   → Got ${allOffers.length} store offers with direct URLs`);
-      shoppingProducts = allOffers;
+      if (allOffers.length > 0) {
+        console.log(`   → Got ${allOffers.length} store offers with direct URLs`);
+        shoppingProducts = [...shoppingProducts, ...allOffers];
+      }
     }
 
-    // Also include any direct URLs from the original results
-    directResults = shoppingResults.filter(r => r.isDirect);
-    shoppingProducts = [...shoppingProducts, ...directResults];
-
-    // Include Lens product URLs — these are direct links to real stores
-    // Lens organic results don't have thumbnails, so use shopping result images
+    // Add Lens product URLs as bonus candidates
     if (options.lensProducts?.length > 0) {
-      const shoppingImageMap = new Map();
-      for (const r of shoppingResults) {
-        if (r.image && r.title) shoppingImageMap.set(r.title.toLowerCase().slice(0, 40), r.image);
-      }
       const fallbackImage = shoppingResults.find(r => r.image)?.image || null;
-
-      const lensAsProducts = options.lensProducts.map(item => {
-        // Try to find matching shopping result image by title similarity
-        const titleKey = (item.title || '').toLowerCase().slice(0, 40);
-        const matchedImage = shoppingImageMap.get(titleKey) || null;
-        return {
+      const lensAsProducts = options.lensProducts
+        .filter(item => item.url)
+        .map(item => ({
           marketplace: item.marketplace || 'Unknown',
           title: item.title || '',
           price: item.price || null,
           url: item.url,
-          image: item.image || matchedImage || fallbackImage,
+          image: item.image || fallbackImage,
           source: 'google_lens',
           condition: 'New',
-        };
-      });
-      console.log(`   🔍 ${label}: adding ${lensAsProducts.length} Lens product URLs (fallback img: ${!!fallbackImage})`);
+        }));
+      console.log(`   🔍 ${label}: adding ${lensAsProducts.length} Lens product URLs`);
       shoppingProducts = [...shoppingProducts, ...lensAsProducts];
     }
-
-    // Fallback to Tavily resolution if still nothing
-    if (shoppingProducts.length === 0) {
-      const needsResolution = shoppingResults.filter(r => !r.isDirect);
-      if (needsResolution.length > 0) {
-        console.log(`🔗 ${label}: no product offers, falling back to URL resolution...`);
-        resolvedResults = await resolveShoppingResults(needsResolution, SHOPPING_RESOLUTION_LIMIT, { query: primarySearch });
-        shoppingProducts = [...directResults, ...resolvedResults];
-      }
-    }
-  } else {
-    // ── Alternatives mode: use Tavily resolution as before ──
-    directResults = shoppingResults.filter(r => r.isDirect);
-    const needsResolution = shoppingResults.filter(r => !r.isDirect);
-
-    if (needsResolution.length > 0) {
-      console.log(`🔗 ${label}: resolving ${needsResolution.length} URLs...`);
-      resolvedResults = await resolveShoppingResults(needsResolution, SHOPPING_RESOLUTION_LIMIT, { query: primarySearch });
-    }
-    shoppingProducts = [...directResults, ...resolvedResults];
   }
 
   if (shoppingProducts.length === 0 && shoppingResults.length > 0) {
