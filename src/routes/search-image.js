@@ -486,13 +486,7 @@ router.post('/search-image', upload.single('image'), async (req, res) => {
 
     const [exactBranch, alternativesBranch] = await Promise.all([exactPromise, alternativePromise]);
 
-    if (exactBranch && (!exactBranch.ranked.results || exactBranch.ranked.results.length === 0)) {
-      const exactLensFallback = buildExactLensFallback(lensResults, null);
-      if (exactLensFallback.results.length > 0) {
-        console.log(`   ↪ Exact match search: using ${exactLensFallback.results.length} direct Lens fallback hits`);
-        exactBranch.ranked = exactLensFallback;
-      }
-    }
+    // No Lens fallback — trust the LLM-ranked shopping results
 
     const primaryRanked = exactBranch?.ranked?.results?.length
       ? exactBranch.ranked

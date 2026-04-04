@@ -247,14 +247,9 @@ function scoreResult(result, priceStats, context) {
   if (context.model && !hasModel) warnings.push(`Missing requested model: ${context.model}`);
 
   const overallScore = clamp((relevanceScore * 0.5) + (valueScore * 0.3) + (trustScore * 0.2));
-  const failsHardRequirement = !hasPrice
-    || genericPage
-    || relevanceScore < 40
-    || overallScore < 45
-    || (context.color && !hasColor)
-    || (context.brand && !hasBrand)
-    || (context.model && !hasModel);
-  const isActualProduct = !failsHardRequirement;
+  // Only filter out generic/category pages — don't kill results for missing color/brand/model words,
+  // the search query already targeted the right product. Let scoring handle relevance.
+  const isActualProduct = !genericPage;
 
   let recommendation = 'Balanced pick based on relevance, price, and seller trust';
   if (overallScore >= 85) recommendation = 'Top pick with strong relevance and pricing';
