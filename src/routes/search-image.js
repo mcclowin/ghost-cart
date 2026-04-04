@@ -356,8 +356,8 @@ async function runShoppingBranch(label, searchQuery, minimumResults = MIN_IMAGE_
 
   const ranked = shoppingProducts.length > 0
     ? (options.exactMode
-      ? rankExactCandidates(filteredProducts, options.exactConstraints)
-      : await rankResults(searchQuery, filteredProducts, parsed))
+      ? rankExactCandidates(shoppingProducts, null)
+      : await rankResults(searchQuery, shoppingProducts, parsed))
     : { results: [], bestPick: 'No results found', filtered: [] };
 
   const rankedResults = [...(ranked.results || [])];
