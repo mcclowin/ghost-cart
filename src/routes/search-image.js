@@ -378,17 +378,29 @@ async function runShoppingBranch(label, searchQuery, minimumResults = MIN_IMAGE_
     shoppingProducts = [...shoppingProducts, ...directResults];
 
     // Include Lens product URLs — these are direct links to real stores
+    // Lens organic results don't have thumbnails, so use shopping result images
     if (options.lensProducts?.length > 0) {
-      const lensAsProducts = options.lensProducts.map(item => ({
-        marketplace: item.marketplace || 'Unknown',
-        title: item.title || '',
-        price: item.price || null,
-        url: item.url,
-        image: item.image || null,
-        source: 'google_lens',
-        condition: 'New',
-      }));
-      console.log(`   🔍 ${label}: adding ${lensAsProducts.length} Lens product URLs`);
+      const shoppingImageMap = new Map();
+      for (const r of shoppingResults) {
+        if (r.image && r.title) shoppingImageMap.set(r.title.toLowerCase().slice(0, 40), r.image);
+      }
+      const fallbackImage = shoppingResults.find(r => r.image)?.image || null;
+
+      const lensAsProducts = options.lensProducts.map(item => {
+        // Try to find matching shopping result image by title similarity
+        const titleKey = (item.title || '').toLowerCase().slice(0, 40);
+        const matchedImage = shoppingImageMap.get(titleKey) || null;
+        return {
+          marketplace: item.marketplace || 'Unknown',
+          title: item.title || '',
+          price: item.price || null,
+          url: item.url,
+          image: item.image || matchedImage || fallbackImage,
+          source: 'google_lens',
+          condition: 'New',
+        };
+      });
+      console.log(`   🔍 ${label}: adding ${lensAsProducts.length} Lens product URLs (fallback img: ${!!fallbackImage})`);
       shoppingProducts = [...shoppingProducts, ...lensAsProducts];
     }
 
