@@ -45,7 +45,7 @@ function renderResultsPage(data) {
   const vision = data.vision || {};
   const exactRanked = data.exact?.ranked || data.exactResults || {};
   const alternativeRanked = data.alternatives?.ranked || data.alternativeResults || {};
-  const exactResults = exactRanked.results || [];
+  const exactResults = (exactRanked.results || []).slice(0, 4);
   const alternativeResults = (alternativeRanked.results || []).slice(0, 3);
   const primary = (vision.items || [])[0] || {};
   const discovery = data.discovery || {};
@@ -101,6 +101,13 @@ function renderResultsPage(data) {
     ? `<p class="credit">From a post by <a href="https://instagram.com/${data.post_author}" target="_blank">@${data.post_author}</a></p>`
     : '';
 
+  const originalImage = data.originalImage || null;
+
+  const originalPhotoHtml = originalImage ? `
+  <div class="original-photo">
+    <img src="${escapeHtml(originalImage)}" alt="Original photo" onerror="this.parentElement.style.display='none'" />
+  </div>` : '';
+
   const heroHtml = heroImage ? `
   <div class="hero">
     <img src="${escapeHtml(heroImage)}" alt="${escapeHtml(identifiedItem)}" onerror="this.parentElement.style.display='none'" />
@@ -130,7 +137,16 @@ function renderResultsPage(data) {
       line-height: 1.6;
     }
     .logo {
-      display: block; margin: 24px auto 20px; max-width: 200px; height: auto;
+      display: block; margin: 24px auto 16px; max-width: 180px; height: auto;
+    }
+    .original-photo {
+      width: 100%; border-radius: 16px; overflow: hidden;
+      margin-bottom: 20px; background: #111;
+      border: 1px solid #222;
+    }
+    .original-photo img {
+      width: 100%; max-height: 400px; object-fit: contain;
+      display: block; background: #111;
     }
     .hero {
       width: 100%; border-radius: 16px; overflow: hidden;
@@ -205,7 +221,7 @@ function renderResultsPage(data) {
 <body>
   <img class="logo" src="/images/kaboom-logo.svg" alt="Kaboom">
 
-  ${heroHtml}
+  ${originalPhotoHtml}
 
   <div class="identification">
     <p class="id-label">We identified this as</p>
@@ -220,6 +236,8 @@ function renderResultsPage(data) {
   </div>
 
   ${postCredit}
+
+  ${heroHtml}
 
   ${exactHtml}
   ${alternativesHtml}

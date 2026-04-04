@@ -237,7 +237,7 @@ function rankExactCandidates(results, constraints) {
     .sort((a, b) => b.overallScore - a.overallScore);
 
   return {
-    results: ranked.slice(0, 6).map((item, index) => ({ ...item, rank: index + 1 })),
+    results: ranked.slice(0, 4).map((item, index) => ({ ...item, rank: index + 1 })),
     filtered: [],
     bestPick: ranked[0]
       ? `${ranked[0].title} looks like the strongest exact match for the Lens-identified item.`
@@ -493,6 +493,7 @@ router.post('/search-image', upload.single('image'), async (req, res) => {
       post_url: post_url || null,
       post_author: post_author || null,
       caption: caption || null,
+      originalImage: req.file?.filename ? `/uploads/${req.file.filename}` : null,
       vision: vision || { items: [], confidence: 'low' },
       lensResults: {
         exactCount: lensResults.exactMatches.length,
@@ -591,9 +592,7 @@ router.post('/search-image', upload.single('image'), async (req, res) => {
       error: error.message,
     });
   } finally {
-    if (imagePath) {
-      unlink(imagePath).catch(() => {});
-    }
+    // Keep uploaded images — they're shown on the results page
   }
 });
 
