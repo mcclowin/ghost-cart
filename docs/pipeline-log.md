@@ -15,12 +15,69 @@ Check this before making changes to avoid repeating mistakes.
 ### Pattern: Replacing a data source instead of adding to it
 - **Seen:** Lens URLs replaced Tavily resolution, breaking the pipeline
 - **Root cause:** `if (shoppingProducts.length === 0)` check meant adding Lens products prevented Tavily from running
-- **Rule:** New data sources should be additive (bonus candidates), never replace existing working sources. Always resolve shopping results via Tavily.
+- **Rule:** New data sources should be additive (bonus candidates), never replace existing working sources.
 
 ### Pattern: LLM inconsistency on colorways
 - **Seen:** Same image produces "New Balance 740 Rich Oak Bisque Pecan" one run and "New Balance 740 brown" the next
 - **Root cause:** LLM summarizes colorway names to generic colors unless explicitly told not to
 - **Rule:** Prompt must say: use exact colorway names from Lens titles, do NOT simplify to generic colors.
+
+### Pattern: Tavily resolution is unreliable
+- **Seen:** Across all queries — resolves to wrong pages, Pinterest, category pages, different products, duplicate URLs
+- **Root cause:** Tavily re-searches by product title on a domain, doesn't follow the actual Google redirect. Often finds something else.
+- **Evidence:** Loro Piana — 12/14 Tavily calls returned nothing. AV dress — resolved to wrong stores, duplicates. NB 740 — some good, some wrong colorway.
+- **Rule:** Don't rely on Tavily as the primary source of product URLs. Use it as a bonus only.
+
+---
+
+## Checkpoint: 2026-04-05 — Lens-first exact match process
+
+### Problem Statement
+The exact match pipeline has been non-deterministic. Same image produces great results one run and garbage the next because:
+1. Google Shopping returns different results each time
+2. Tavily resolution is unreliable (wrong pages, failures, duplicates)
+3. Multiple data sources compete/override each other instead of complementing
+
+### Evidence (dry run: NB 740 Rich Oak Bisque Pecan)
+
+**What Lens gave us (free, no extra API calls):**
+- offers: GOAT $86 direct link, in stock
+- organic: newbalance.com, StockX, Foot Locker, JD Sports, Amazon, iqueens.com, Journeys — all direct product URLs
+- Total: ~8 buyable links, all correct product, all correct colorway
+
+**What the current process produced (Google Shopping + Tavily):**
+- 40 Google Shopping results → 12 Tavily calls → ASOS, Snipes, Selfridges (good) + broken links, duplicates, wrong colorways
+- More API calls, slower, less consistent
+
+**Conclusion:** Lens already found the product on real stores. Re-searching via Google Shopping + Tavily adds complexity and unreliability without improving quality.
+
+### New Process: Lens-first exact matches
+
+```
+Step 1: Vision + Lens (parallel) — unchanged
+Step 2: LLM reconciliation — unchanged
+Step 3: Exact matches FROM LENS DATA:
+   a. Lens offers[] — direct buy links with prices (best quality)
+   b. Lens organic[] — filter to buyable product URLs
+   c. Lens visual[] — filter to buyable product URLs
+   → Filter out: social media, used/resale, category pages
+   → Deduplicate by URL
+   → This IS the exact match list
+Step 4: Alternatives ONLY: Google Shopping + Tavily (unchanged)
+```
+
+**What this removes from exact branch:** Google Shopping search, Tavily resolution, SerpAPI Product Offers
+**What this keeps:** All Lens data (offers + organic + visual), URL classification, used product filter
+**Risk:** If Lens returns few buyable URLs, exact matches will be sparse. Mitigated by alternatives section still running full pipeline.
+**Image issue:** Lens organic has no thumbnails. Use visual match images or Google Shopping thumbnails as fallback.
+
+### Tested against:
+| Query | Lens offers | Lens buyable organic | Would work? |
+|-------|------------|---------------------|-------------|
+| NB 740 Rich Oak | GOAT $86 | 7 stores | Yes — better than current |
+| AV Sequin Dress | None | Farfetch, Estar De Moda, Fashion Alta Moda | Yes — these are the good results we got |
+| Loro Piana Croco | MILNY PARLON £795 | Lyst, some stores | Yes — better than 12/14 Tavily failures |
+| Salomon XT-MM6 | None | Shopbop, Novelship, END, Farfetch, SSENSE | Yes — all real stores |
 
 ---
 
@@ -32,27 +89,39 @@ Check this before making changes to avoid repeating mistakes.
 
 | Run | Exact Query | Exact Results | Issue | Fix |
 |-----|------------|---------------|-------|-----|
-| 1 | "AV Sequin One-shoulder Mini Dress copper" | 9 found, 0 passed strict filter | `matchesExactConstraints` required ALL tokens (sequin+one+shoulder+mini+dress+copper) | Removed heuristic filtering entirely |
-| 2 | Same | 6 Lens fallback (eBay, used) | `buildExactLensFallback` replaced good results with raw Lens junk | Removed Lens fallback |
-| 3 | Same | 7 results but wrong products | `scoreResult` hard-killed results missing color/brand/model words | Relaxed hard filters, only reject generic pages |
-| 4 | Same | Error: filteredProducts undefined | Leftover variable reference from removing constraints | Fixed reference to use shoppingProducts |
-| 5 | Same | 8 results, no images on exact | Lens organic results don't have thumbnails, shopping results skipped | Added fallback image from shopping thumbnails |
-| 6 | Same | 8 results, wrong colors | Lens URLs prevented Tavily from resolving shopping results | Made Tavily always run, Lens/Offers are additive |
+| 1 | "AV Sequin One-shoulder Mini Dress copper" | 9 found, 0 passed strict filter | `matchesExactConstraints` required ALL tokens | Removed heuristic filtering |
+| 2 | Same | 6 Lens fallback (eBay, used) | `buildExactLensFallback` replaced good results | Removed Lens fallback |
+| 3 | Same | 7 results but wrong products | `scoreResult` hard-killed results | Relaxed hard filters |
+| 4 | Same | Error: filteredProducts undefined | Leftover variable reference | Fixed reference |
+| 5 | Same | 8 results, no images on exact | Lens organic has no thumbnails | Added fallback images |
+| 6 | Same | 8 results, wrong colors | Lens URLs prevented Tavily from running | Made Tavily always run |
+| 7 | Same | Decent results, correct links | — | — |
 
-**Current status:** Tavily always resolves shopping results. Lens URLs + Product Offers added as bonus. Needs retest.
+**Current status:** Working. Correct product identification and links.
 
-### Run: New Balance 740 (2026-04-04)
+### Run: New Balance 740 (2026-04-04/05)
 
 **Image:** Brown/beige NB 740 Rich Oak Bisque Pecan
 
 | Run | Exact Query | Issue | Fix |
 |-----|------------|-------|-----|
-| 1 | "NB 740 Rich Oak Bisque" | Wrong colorways in results, exact scoring broken | `scoreExactCandidate` called with null constraints, everything scored same | Switched to LLM ranking for both branches |
+| 1 | "NB 740 Rich Oak Bisque" | Wrong colorways, scoring broken | Switched to LLM ranking |
 | 2 | "NB 740 Rich Oak Bisque Pecan" | Good results | — |
-| 3 | "NB 740 brown" | LLM simplified colorway to generic "brown" | Updated prompt to require exact colorway names |
-| 4 | "NB 740 Rich Oak Bisque Pecan" | Good query, but shopping results skipped (Lens URLs replaced Tavily) | Made Tavily always run |
+| 3 | "NB 740 brown" | LLM simplified colorway | Updated prompt |
+| 4 | "NB 740 Rich Oak Bisque Pecan" | Shopping results skipped | Made Tavily always run |
+| 5 | "NB 740 Rich Oak Bisque Pecan" | Good — all exact matches correct | — |
 
-**Current status:** Prompt updated for colorways. Tavily restored. Needs retest.
+**Current status:** Working well. Exact matches all correct product and colorway.
+
+### Run: Loro Piana Croco Touch (2026-04-04)
+
+**Image:** Gray suede loafers with croc strap
+
+| Run | Exact Query | Issue | Fix |
+|-----|------------|-------|-----|
+| 1 | "LP Croco Touch Summer Walk Eucalyptus" | 12/14 Tavily calls failed (can't resolve loropiana.com) | — |
+
+**Current status:** Poor. Tavily can't resolve luxury brand sites. Lens-first would fix this — offers had MILNY PARLON direct link.
 
 ### Run: Prada hooded jacket (2026-04-04)
 
@@ -60,10 +129,10 @@ Check this before making changes to avoid repeating mistakes.
 
 | Run | Exact Query | Issue | Fix |
 |-----|------------|-------|-----|
-| 1 (heuristic) | "Harry and Zoe's NYC Stroll" | Heuristic picked reseller name over brand | Switched to LLM-first reconciliation |
-| 2 (LLM) | none (medium confidence) | LLM couldn't identify brand from Lens titles | Added related_search to LLM input, updated prompt for brand vs store distinction |
+| 1 (heuristic) | "Harry and Zoe's NYC Stroll" | Heuristic picked reseller over brand | LLM-first reconciliation |
+| 2 (LLM) | none (medium) | LLM couldn't identify brand | Added related_search to input |
 
-**Current status:** LLM reconciliation is primary. Related searches passed in. Not retested with latest changes.
+**Current status:** Needs retest with latest LLM prompt.
 
 ---
 
@@ -71,44 +140,47 @@ Check this before making changes to avoid repeating mistakes.
 
 ### Decision: LLM-first reconciliation (not heuristic)
 - **Date:** 2026-04-04
-- **Why:** Heuristic `inferLensExactMatch` picked winners by title overlap count. Reseller names with more listings beat actual brands. LLM understands brand vs store.
+- **Why:** Heuristic picked reseller names over brands. LLM understands brand vs store.
 - **Heuristic kept as:** Fallback only when LLM fails.
 
 ### Decision: No Lens fallback for exact matches
 - **Date:** 2026-04-04
-- **Why:** `buildExactLensFallback` grabbed raw Lens URLs (eBay used listings, Instagram, Pinterest) and replaced ranked shopping results. Always worse quality.
-
-### Decision: Tavily always runs for shopping resolution
-- **Date:** 2026-04-04
-- **Why:** Skipping Tavily when other sources (Lens URLs, Product Offers) existed meant 8+ good shopping results were never resolved. New sources must be additive.
+- **Why:** Raw Lens fallback replaced ranked results with eBay/Instagram junk.
 
 ### Decision: No hard kill filters in ranker
 - **Date:** 2026-04-04
-- **Why:** Hard requirements (must have brand + model + color in title) rejected valid results where wording differed. Only generic/category pages should be filtered.
+- **Why:** Hard requirements rejected valid results where wording differed.
+
+### Decision: Lens-first exact matches (PROPOSED)
+- **Date:** 2026-04-05
+- **Why:** Google Shopping + Tavily is unreliable for exact matches. Lens already found the product on real stores. Using Lens offers + organic + visual (filtered) as the primary exact match source removes Tavily unreliability and reduces API calls.
+- **Alternatives branch:** Unchanged (Google Shopping + Tavily).
 
 ---
 
-## Data Sources (current)
+## Data Sources
 
 | Source | Used For | Quality | Notes |
 |--------|----------|---------|-------|
-| Bright Data Lens | Product identification (Step 1) | High | Returns organic + images + related_search. related_search often has exact product name |
-| Bright Data Lens URLs | Bonus exact match candidates | Medium | Organic results have real store URLs but no thumbnails. Many are used/social. Filter needed |
-| SerpAPI Google Shopping | Store listings (Step 4) | Medium | Has thumbnails, prices, ratings. URLs are Google redirects needing resolution |
-| SerpAPI Product Offers | Real store URLs | High when available | Uses pageToken. Often returns nothing for designer/niche items |
-| Tavily | URL resolution | Medium | Resolves Google Shopping redirects to real store URLs. Sometimes resolves to wrong page |
-| Vision LLM | Image attributes (Step 1) | Low-Medium | Often hallucinates brands. Good for generic attributes (color, item type) |
-| LLM Reconciliation | Product identification (Step 3) | High | Reads all Lens titles + related searches. Inconsistent on colorways without strong prompting |
-| LLM Ranking (`rankResults`) | NOT ACTUALLY LLM | — | Despite the name, this is pure heuristic scoring. No LLM call. |
+| Bright Data Lens organic | Product URLs (exact match) | High | Direct store URLs. No thumbnails. Filter out social/used |
+| Bright Data Lens visual | Product URLs + images (exact match) | High | Has thumbnails. Filter out social/used |
+| Bright Data Lens offers | Direct buy links (exact match, best) | Highest | Has price, availability, store name. Not always present |
+| Bright Data Lens related_search | Product identification | High | Often has exact product name from Google AI |
+| SerpAPI Google Shopping | Store listings (alternatives only) | Medium | Has thumbnails, prices. URLs need Tavily resolution |
+| Tavily | URL resolution (alternatives only) | Low-Medium | Unreliable. Wrong pages, failures, duplicates |
+| Vision LLM | Image attributes | Low-Medium | Hallucinates brands. Good for generic attributes |
+| LLM Reconciliation | Product identification | High | Reads Lens titles + related searches |
+| Heuristic Ranking (`rankResults`) | Result sorting | Medium | Not actually LLM despite the name. Token matching + trust scores |
 
 ---
 
 ## TODO / Known Issues
 
-- [ ] `rankResults` is heuristic, not LLM — misleading name. Consider adding actual LLM ranking or renaming.
-- [ ] Tavily sometimes resolves to wrong pages (Pinterest, category pages, different products)
+- [ ] Implement Lens-first exact match process
+- [ ] Capture and use Lens `offers` field
+- [ ] Add detailed logging for all Lens data (organic URLs, visual URLs, offers)
+- [ ] `rankResults` is heuristic, not LLM — misleading name
 - [ ] Used product filter only runs on exact branch, not alternatives
 - [ ] No deduplication of results across exact + alternatives branches
-- [ ] `getProductOffers` rarely returns data for designer/niche items — consider removing to save complexity
-- [ ] Bright Data Lens `offers` field is captured but never used (has direct buy links with prices)
 - [ ] OG image is SVG — Instagram DM previews may not render it (needs PNG)
+- [ ] `getProductOffers` rarely returns data — consider removing to reduce complexity

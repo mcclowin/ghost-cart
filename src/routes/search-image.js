@@ -16,7 +16,7 @@ import { unlink } from 'fs/promises';
 import { extname } from 'path';
 import { analyzeClothingImage } from '../services/vision.js';
 import { parseQuery, rankResults, reconcileImageDiscovery } from '../services/venice.js';
-import { searchGoogleShopping, getProductOffers } from '../services/search-serp.js';
+import { searchGoogleShopping } from '../services/search-serp.js';
 import { resolveShoppingResults } from '../services/search-web.js';
 import { inferLensExactMatch, searchGoogleLens } from '../services/search-lens.js';
 import { saveResult } from '../services/results-store.js';
@@ -56,13 +56,7 @@ const upload = multer({
 const BASE_URL = process.env.BASE_URL || process.env.AGENT_BASE_URL || 'http://localhost:3000';
 const LENS_PROVIDER = process.env.LENS_PROVIDER || 'none';
 const SHOPPING_RESOLUTION_LIMIT = Number(process.env.IMAGE_SHOPPING_RESOLUTION_LIMIT || 12);
-const MIN_IMAGE_RESULTS = Number(process.env.IMAGE_MIN_RESULTS || 6);
-const EXACT_IGNORE_TOKENS = new Set([
-  'a', 'an', 'and', 'black', 'blue', 'brown', 'by', 'calf', 'cotton', 'for',
-  'gray', 'grey', 'green', 'in', 'leather', 'low', 'men', 'mid', 'rubber',
-  'shoe', 'shoes', 'sneaker', 'sneakers', 'suede', 'the', 'top', 'tops',
-  'trainer', 'trainers', 'white', 'with', 'women',
-]);
+const MIN_IMAGE_RESULTS = Number(process.env.IMAGE_MIN_RESULTS || 3);
 
 function resolvePublicBaseUrl(req) {
   const forwardedProto = req.get('x-forwarded-proto')?.split(',')[0]?.trim();
@@ -93,99 +87,6 @@ function normaliseDisplayPrice(price) {
   return '—';
 }
 
-function tokenizeExact(text) {
-  return String(text || '')
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, ' ')
-    .split(/\s+/)
-    .filter(Boolean);
-}
-
-function buildExactConstraints(discovery) {
-  if (!discovery?.hasExactModel || !discovery.exactSearchQuery) return null;
-
-  const tokens = tokenizeExact(discovery.exactSearchQuery);
-  const significantTokens = [...new Set(tokens.filter(token => (
-    token.length > 2
-    && !EXACT_IGNORE_TOKENS.has(token)
-    && !/^\d+$/.test(token)
-  )))];
-
-  const brandTokens = significantTokens.slice(0, Math.min(significantTokens.length > 2 ? 2 : 1, significantTokens.length));
-  const modelTokens = significantTokens.slice(brandTokens.length);
-  const shape =
-    /\blow\b/.test(discovery.exactSearchQuery) ? 'low' :
-    /\bhigh\b/.test(discovery.exactSearchQuery) ? 'high' :
-    /\bmid\b/.test(discovery.exactSearchQuery) ? 'mid' :
-    null;
-  // Only enforce color for explicit single-color queries like "triple black".
-  // Multi-color products (e.g. "white silver black") are handled by the search
-  // engine naturally — hard-filtering on one color rejects good results.
-  const preferredColor =
-    /\btriple black\b/i.test(discovery.exactSearchQuery) ? 'triple black' :
-    /\btriple white\b/i.test(discovery.exactSearchQuery) ? 'triple white' :
-    null;
-
-  return { brandTokens, modelTokens, shape, preferredColor };
-}
-
-function matchesExactConstraints(item, constraints) {
-  if (!constraints) return true;
-  const haystack = `${item.title || ''} ${item.snippet || ''} ${item.url || ''}`.toLowerCase();
-  const brandMatches = constraints.brandTokens.filter(token => haystack.includes(token));
-  const modelMatches = constraints.modelTokens.filter(token => haystack.includes(token));
-
-  // Brand must appear
-  if (constraints.brandTokens.length > 0 && brandMatches.length === 0) {
-    return false;
-  }
-  // Require at least half of model tokens (not all — listings vary in how they describe items)
-  const minModelMatches = Math.max(1, Math.ceil(constraints.modelTokens.length / 2));
-  if (constraints.modelTokens.length > 0 && modelMatches.length < minModelMatches) {
-    return false;
-  }
-
-  if (constraints.shape === 'low' && /\bhigh\b|\bhigh-top\b|\bmid\b/i.test(haystack)) {
-    return false;
-  }
-  if (constraints.shape === 'high' && /\blow\b|\blow-top\b/i.test(haystack)) {
-    return false;
-  }
-  if (constraints.shape === 'mid' && /\blow\b|\blow-top\b|\bhigh\b|\bhigh-top\b/i.test(haystack)) {
-    return false;
-  }
-
-  if (constraints.preferredColor === 'triple black' && !/\btriple black\b|\ball black\b/i.test(haystack)) {
-    return false;
-  }
-  if (constraints.preferredColor === 'triple white' && !/\btriple white\b|\ball white\b/i.test(haystack)) {
-    return false;
-  }
-
-  return true;
-}
-
-function normalisePriceAmount(price) {
-  if (price == null) return null;
-  if (typeof price === 'number') return price;
-  if (typeof price === 'string') {
-    const match = price.match(/(\d+(?:[.,]\d{1,2})?)/);
-    return match ? parseFloat(match[1].replace(',', '.')) : null;
-  }
-  if (typeof price === 'object' && price.amount != null) {
-    const amount = Number(price.amount);
-    return Number.isFinite(amount) ? amount : null;
-  }
-  return null;
-}
-
-function isLikelyProductUrl(url) {
-  const value = String(url || '');
-  if (!value) return false;
-  if (/instagram|youtube|reddit|pinterest|facebook/i.test(value)) return false;
-  return /\/itm\/|\/dp\/|\/product\/|\/products\/|\/sneakers\/|sku|stylecode|goat|stockx|novelship|farfetch|maisonmargiela|ssense/i.test(value);
-}
-
 const RESALE_DOMAINS = /\b(ebay|depop|vinted|poshmark|therealreal|vestiairecollective|thredup|grailed|mercari|tradesy)\b/i;
 const USED_KEYWORDS = /\bpre[- ]?owned\b|\bused\b|\bvintage\b|\bsecondhand\b|\bsecond[- ]hand\b/i;
 
@@ -195,105 +96,6 @@ function isUsedProduct(item) {
   if (RESALE_DOMAINS.test(url)) return true;
   if (USED_KEYWORDS.test(title)) return true;
   return false;
-}
-
-function scoreExactCandidate(item, constraints) {
-  const haystack = `${item.title || ''} ${item.snippet || ''} ${item.url || ''}`.toLowerCase();
-  let score = 40;
-
-  const modelMatches = constraints?.modelTokens?.filter(token => haystack.includes(token)) || [];
-  const brandMatches = constraints?.brandTokens?.filter(token => haystack.includes(token)) || [];
-  score += modelMatches.length * 16;
-  score += brandMatches.length * 8;
-
-  if (constraints?.shape === 'low' && /\blow\b|\blow-top\b/i.test(haystack)) score += 10;
-  if (constraints?.shape === 'high' && /\bhigh\b|\bhigh-top\b/i.test(haystack)) score += 10;
-  if (constraints?.shape === 'mid' && /\bmid\b|\bmid-top\b/i.test(haystack)) score += 10;
-
-  if (constraints?.preferredColor === 'triple black' && /\btriple black\b|\ball black\b/i.test(haystack)) score += 14;
-  else if (constraints?.preferredColor === 'triple white' && /\btriple white\b|\ball white\b/i.test(haystack)) score += 14;
-  else if (constraints?.preferredColor && haystack.includes(constraints.preferredColor)) score += 8;
-
-  if (isLikelyProductUrl(item.url)) score += 14;
-  if (/replica/i.test(haystack) && !(constraints?.modelTokens || []).includes('replica')) score -= 24;
-  if (/future/i.test(haystack) && (constraints?.modelTokens || []).includes('future')) score += 12;
-  if (/high-top|high top/i.test(haystack) && constraints?.shape === 'low') score -= 25;
-  if (/mid-top|mid top/i.test(haystack) && constraints?.shape === 'low') score -= 20;
-
-  if (normalisePriceAmount(item.price) != null) score += 6;
-  if (item.source === 'google_lens_exact') score += 10;
-
-  return Math.max(0, Math.min(100, score));
-}
-
-function rankExactCandidates(results, constraints) {
-  const ranked = results
-    .filter(item => !isUsedProduct(item))
-    .map(item => {
-      const overallScore = scoreExactCandidate(item, constraints);
-      return {
-        marketplace: item.marketplace,
-        title: item.title,
-        price: normaliseDisplayPrice(item.price),
-        url: item.url,
-        image: item.image || null,
-        relevanceScore: overallScore,
-        valueScore: normalisePriceAmount(item.price) != null ? 62 : 50,
-        trustScore: isLikelyProductUrl(item.url) ? 78 : 58,
-        overallScore,
-        warnings: [],
-        recommendation: 'Strong exact-match candidate from the Lens-identified product family',
-      };
-    })
-    .filter(item => item.overallScore >= 58)
-    .sort((a, b) => b.overallScore - a.overallScore);
-
-  return {
-    results: ranked.slice(0, 4).map((item, index) => ({ ...item, rank: index + 1 })),
-    filtered: [],
-    bestPick: ranked[0]
-      ? `${ranked[0].title} looks like the strongest exact match for the Lens-identified item.`
-      : 'No strong exact-match shop listings found.',
-    privacyNote: 'Your search was processed with zero data retention',
-  };
-}
-
-function buildExactLensFallback(lensResults, constraints) {
-  const candidates = [...(lensResults?.exactMatches || []), ...(lensResults?.visualMatches || [])]
-    .filter(item => item?.url)
-    .filter(item => matchesExactConstraints(item, constraints))
-    .filter(item => isLikelyProductUrl(item.url))
-    .map(item => {
-      const overallScore = Math.max(72, scoreExactCandidate(item, constraints));
-      return {
-        marketplace: item.marketplace,
-        title: item.title,
-        price: normaliseDisplayPrice(item.price),
-        url: item.url,
-        image: item.image || null,
-        relevanceScore: overallScore,
-        valueScore: 55,
-        trustScore: 72,
-        overallScore,
-        warnings: ['Direct Lens fallback while exact shop results were sparse'],
-        recommendation: 'Direct Lens product hit',
-      };
-    });
-
-  const deduped = [];
-  const seen = new Set();
-  for (const item of candidates) {
-    if (seen.has(item.url)) continue;
-    seen.add(item.url);
-    deduped.push(item);
-  }
-
-  return {
-    results: deduped.slice(0, 6).map((item, index) => ({ ...item, rank: index + 1 })),
-    filtered: [],
-    bestPick: deduped[0] ? `${deduped[0].title} was surfaced directly by Lens.` : 'No Lens fallback hits available.',
-    privacyNote: 'Your search was processed with zero data retention',
-  };
 }
 
 function buildBackfillCandidates(results, parsed, existingUrls, desiredCount) {
@@ -339,6 +141,101 @@ function buildBackfillCandidates(results, parsed, existingUrls, desiredCount) {
     }));
 }
 
+// ── Lens-first exact matches (deterministic) ──
+const SOCIAL_URL_PATTERN = /instagram|youtube|reddit|pinterest|facebook|tiktok|twitter|threads/i;
+const CATEGORY_URL_PATTERN = /\/collections?\b|\/category\b|\/search\?|\/shop\/?$|\/brand\//i;
+
+function isBuyableUrl(url) {
+  if (!url) return false;
+  if (SOCIAL_URL_PATTERN.test(url)) return false;
+  if (CATEGORY_URL_PATTERN.test(url)) return false;
+  return true;
+}
+
+function buildExactMatchesFromLens(lensResults, discovery) {
+  const allCandidates = [];
+
+  // 1. Offers — best quality (direct buy links with prices)
+  for (const offer of (lensResults.offers || [])) {
+    if (!isBuyableUrl(offer.url)) continue;
+    if (isUsedProduct(offer)) continue;
+    allCandidates.push({
+      marketplace: offer.marketplace || 'Unknown',
+      title: offer.title || discovery.exactModel || '',
+      price: offer.price ? (typeof offer.price === 'string' ? offer.price : offer.price.display || '') : '',
+      url: offer.url,
+      image: offer.image || null,
+      source: 'lens_offer',
+      availability: offer.availability || null,
+    });
+  }
+
+  // 2. Organic results — direct store URLs
+  for (const item of (lensResults.exactMatches || [])) {
+    if (!isBuyableUrl(item.url)) continue;
+    if (isUsedProduct(item)) continue;
+    allCandidates.push({
+      marketplace: item.marketplace || 'Unknown',
+      title: item.title || '',
+      price: '',
+      url: item.url,
+      image: item.image || null,
+      source: 'lens_organic',
+    });
+  }
+
+  // 3. Visual matches — have images
+  for (const item of (lensResults.visualMatches || [])) {
+    if (!isBuyableUrl(item.url)) continue;
+    if (isUsedProduct(item)) continue;
+    allCandidates.push({
+      marketplace: item.marketplace || 'Unknown',
+      title: item.title || '',
+      price: '',
+      url: item.url,
+      image: item.image || null,
+      source: 'lens_visual',
+    });
+  }
+
+  // Deduplicate by URL
+  const seen = new Set();
+  const deduped = allCandidates.filter(item => {
+    if (seen.has(item.url)) return false;
+    seen.add(item.url);
+    return true;
+  });
+
+  // Log what we found
+  console.log(`   🎯 Lens exact candidates: ${deduped.length} buyable (${allCandidates.length - deduped.length} dupes removed)`);
+  for (const c of deduped.slice(0, 8)) {
+    const priceStr = c.price ? ` ${c.price}` : '';
+    const imgStr = c.image ? ' 🖼️' : '';
+    console.log(`      ${c.source === 'lens_offer' ? '💰' : '📄'} [${c.marketplace}]${priceStr}${imgStr} — ${c.url.slice(0, 70)}`);
+  }
+
+  const results = deduped.slice(0, 4).map((item, index) => ({
+    rank: index + 1,
+    marketplace: item.marketplace,
+    title: item.title,
+    price: item.price,
+    url: item.url,
+    image: item.image,
+    overallScore: 80 - (index * 5),
+    relevanceScore: 80,
+    source: item.source,
+  }));
+
+  return {
+    ranked: {
+      results,
+      bestPick: results[0]?.title || 'No exact matches found',
+    },
+    query: discovery.exactSearchQuery,
+  };
+}
+
+// ── Alternatives: Google Shopping + Tavily ──
 async function runShoppingBranch(label, searchQuery, minimumResults = MIN_IMAGE_RESULTS, options = {}) {
   console.log(`🏪 ${label}: ${searchQuery}`);
   const parsed = await parseQuery(searchQuery);
@@ -349,60 +246,16 @@ async function runShoppingBranch(label, searchQuery, minimumResults = MIN_IMAGE_
     limit: 20,
   });
 
-  let shoppingProducts = [];
-  let directResults = [];
-  let resolvedResults = [];
-
-  // ── Always resolve shopping results via Tavily ──
-  directResults = shoppingResults.filter(r => r.isDirect);
+  const directResults = shoppingResults.filter(r => r.isDirect);
   const needsResolution = shoppingResults.filter(r => !r.isDirect);
 
+  let resolvedResults = [];
   if (needsResolution.length > 0) {
     console.log(`🔗 ${label}: resolving ${needsResolution.length} URLs...`);
     resolvedResults = await resolveShoppingResults(needsResolution, SHOPPING_RESOLUTION_LIMIT, { query: primarySearch });
   }
-  shoppingProducts = [...directResults, ...resolvedResults];
 
-  // ── Exact mode: also try Product Offers + Lens URLs as bonus candidates ──
-  if (options.exactMode) {
-    // Try SerpAPI Product Offers for real store URLs
-    const withTokens = shoppingResults.filter(r => r.pageToken).slice(0, 6);
-    if (withTokens.length > 0) {
-      console.log(`🏷️ ${label}: fetching real store URLs for ${withTokens.length} products...`);
-      const offerBatches = await Promise.all(
-        withTokens.map(async (item) => {
-          const offers = await getProductOffers(item.pageToken);
-          return offers.map(offer => ({
-            ...offer,
-            image: offer.image || item.image || null,
-          }));
-        })
-      );
-      const allOffers = offerBatches.flat();
-      if (allOffers.length > 0) {
-        console.log(`   → Got ${allOffers.length} store offers with direct URLs`);
-        shoppingProducts = [...shoppingProducts, ...allOffers];
-      }
-    }
-
-    // Add Lens product URLs as bonus candidates
-    if (options.lensProducts?.length > 0) {
-      const fallbackImage = shoppingResults.find(r => r.image)?.image || null;
-      const lensAsProducts = options.lensProducts
-        .filter(item => item.url)
-        .map(item => ({
-          marketplace: item.marketplace || 'Unknown',
-          title: item.title || '',
-          price: item.price || null,
-          url: item.url,
-          image: item.image || fallbackImage,
-          source: 'google_lens',
-          condition: 'New',
-        }));
-      console.log(`   🔍 ${label}: adding ${lensAsProducts.length} Lens product URLs`);
-      shoppingProducts = [...shoppingProducts, ...lensAsProducts];
-    }
-  }
+  let shoppingProducts = [...directResults, ...resolvedResults];
 
   if (shoppingProducts.length === 0 && shoppingResults.length > 0) {
     console.log(`   ⚠️ ${label}: using raw Google Shopping fallback`);
@@ -411,15 +264,13 @@ async function runShoppingBranch(label, searchQuery, minimumResults = MIN_IMAGE_
     });
   }
 
-  // Filter used products from exact matches, deduplicate
+  // Deduplicate
   const seen = new Set();
-  const candidates = shoppingProducts
-    .filter(item => {
-      if (!item?.url || seen.has(item.url)) return false;
-      seen.add(item.url);
-      return true;
-    })
-    .filter(item => options.exactMode ? !isUsedProduct(item) : true);
+  const candidates = shoppingProducts.filter(item => {
+    if (!item?.url || seen.has(item.url)) return false;
+    seen.add(item.url);
+    return true;
+  });
 
   const ranked = candidates.length > 0
     ? await rankResults(searchQuery, candidates, parsed)
@@ -525,23 +376,20 @@ router.post('/search-image', upload.single('image'), async (req, res) => {
     }
     console.log(`   🧭 Alternatives query → "${discovery.alternativeSearchQuery}"`);
 
-    console.log('🏪 Step 4: Exact match + alternatives searches...');
-    // Pass Lens results to exact branch — they have direct product URLs
-    const lensProductUrls = [
-      ...(lensResults.exactMatches || []),
-      ...(lensResults.visualMatches || []),
-    ].filter(item => item.url && !/instagram|youtube|reddit|pinterest|facebook|tiktok/i.test(item.url));
+    // ── Step 4a: Exact matches from Lens data (deterministic) ──
+    let exactBranch = null;
+    if (discovery.hasExactModel && discovery.exactSearchQuery) {
+      console.log('🎯 Step 4a: Building exact matches from Lens data...');
+      exactBranch = buildExactMatchesFromLens(lensResults, discovery);
+    }
 
-    const exactPromise = discovery.hasExactModel && discovery.exactSearchQuery
-      ? runShoppingBranch('Exact match search', discovery.exactSearchQuery, 4, {
-        exactMode: true,
-        disableBackfill: true,
-        lensProducts: lensProductUrls,
-      })
-      : Promise.resolve(null);
-    const alternativePromise = runShoppingBranch('Alternatives search', discovery.alternativeSearchQuery || searchQuery, 3);
-
-    const [exactBranch, alternativesBranch] = await Promise.all([exactPromise, alternativePromise]);
+    // ── Step 4b: Alternatives from Google Shopping + Tavily ──
+    console.log('🏪 Step 4b: Alternatives search...');
+    const alternativesBranch = await runShoppingBranch(
+      'Alternatives search',
+      discovery.alternativeSearchQuery || searchQuery,
+      3,
+    );
 
     // No Lens fallback — trust the LLM-ranked shopping results
 

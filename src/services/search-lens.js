@@ -391,16 +391,12 @@ async function searchBrightDataLens(imageUrl, options = {}) {
       }
 
       const data = await response.json();
-      // Log the full Lens response structure so we can see what fields are available
+
+      // ── Log full Lens response structure ──
       const topKeys = Object.keys(data);
       console.log(`   🔬 Lens response keys: ${topKeys.join(', ')}`);
-      for (const key of topKeys) {
-        if (key !== 'organic' && key !== 'images') {
-          const val = data[key];
-          const preview = typeof val === 'object' ? JSON.stringify(val).slice(0, 300) : String(val).slice(0, 300);
-          console.log(`   📋 Lens.${key}: ${preview}`);
-        }
-      }
+
+      // ── Parse organic results (text-based matches) ──
       const exactMatches = (data.organic || [])
         .filter(item => item.link)
         .slice(0, options.limit || 8)
@@ -414,6 +410,7 @@ async function searchBrightDataLens(imageUrl, options = {}) {
           lensPosition: item.global_rank || item.rank || index + 1,
         }));
 
+      // ── Parse visual matches (image similarity) ──
       const visualMatches = (data.images || [])
         .filter(item => item.link)
         .slice(0, options.visualLimit || 12)
@@ -427,17 +424,52 @@ async function searchBrightDataLens(imageUrl, options = {}) {
           lensPosition: item.global_rank || item.rank || index + 1,
         }));
 
-      // Capture related searches — Google often puts the actual brand/product here
+      // ── Parse offers (direct buy links with prices — best source) ──
+      const offers = (data.offers || [])
+        .filter(item => item.link)
+        .map((item, index) => ({
+          title: item.title || '',
+          price: item.price ? { display: item.price.replace(/\*$/, ''), amount: null } : null,
+          url: item.link,
+          image: null,
+          marketplace: item.source || extractStoreName(item.link) || 'Unknown',
+          source: 'google_lens_offer',
+          availability: item.availability || null,
+          lensPosition: index + 1,
+        }));
+
+      // ── Parse related searches ──
       const relatedSearches = (data.related_search || [])
         .map(item => item.title)
         .filter(Boolean)
         .slice(0, 10);
+
+      // ── Detailed logging ──
+      console.log(`   → Lens: ${exactMatches.length} exact, ${visualMatches.length} visual, ${offers.length} offers`);
+
       if (relatedSearches.length > 0) {
         console.log(`   → Lens related searches: ${relatedSearches.join(', ')}`);
       }
 
-      console.log(`   → Lens: ${exactMatches.length} exact, ${visualMatches.length} visual`);
-      return { exactMatches, visualMatches, relatedSearches };
+      if (offers.length > 0) {
+        console.log(`   → Lens offers:`);
+        for (const o of offers) {
+          console.log(`      💰 ${o.marketplace}: ${o.price?.display || 'no price'} — ${o.availability || '?'} — ${o.url.slice(0, 70)}`);
+        }
+      }
+
+      console.log(`   → Lens organic URLs:`);
+      for (const e of exactMatches) {
+        console.log(`      📄 [${e.marketplace}] ${e.title.slice(0, 50)} — ${e.url.slice(0, 70)}`);
+      }
+
+      console.log(`   → Lens visual URLs:`);
+      for (const v of visualMatches) {
+        const hasImg = v.image ? '🖼️' : '  ';
+        console.log(`      ${hasImg} [${v.marketplace}] ${v.title.slice(0, 50)} — ${v.url.slice(0, 70)}`);
+      }
+
+      return { exactMatches, visualMatches, offers, relatedSearches };
     } catch (error) {
       lastError = error;
       const retryable = shouldRetryBrightDataError(error.status || 0, error.message || '');
