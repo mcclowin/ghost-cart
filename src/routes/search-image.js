@@ -20,6 +20,7 @@ import { searchGoogleShopping } from '../services/search-serp.js';
 import { resolveShoppingResults } from '../services/search-web.js';
 import { inferLensExactMatch, searchGoogleLens } from '../services/search-lens.js';
 import { saveResult } from '../services/results-store.js';
+import { logSearch, logBrand, logResults } from '../services/db.js';
 
 const router = Router();
 
@@ -117,11 +118,12 @@ function buildExactConstraints(discovery) {
     /\bhigh\b/.test(discovery.exactSearchQuery) ? 'high' :
     /\bmid\b/.test(discovery.exactSearchQuery) ? 'mid' :
     null;
+  // Only enforce color for explicit single-color queries like "triple black".
+  // Multi-color products (e.g. "white silver black") are handled by the search
+  // engine naturally — hard-filtering on one color rejects good results.
   const preferredColor =
     /\btriple black\b/i.test(discovery.exactSearchQuery) ? 'triple black' :
     /\btriple white\b/i.test(discovery.exactSearchQuery) ? 'triple white' :
-    /\bblack\b/i.test(discovery.exactSearchQuery) ? 'black' :
-    /\bwhite\b/i.test(discovery.exactSearchQuery) ? 'white' :
     null;
 
   return { brandTokens, modelTokens, shape, preferredColor };
@@ -154,12 +156,6 @@ function matchesExactConstraints(item, constraints) {
     return false;
   }
   if (constraints.preferredColor === 'triple white' && !/\btriple white\b|\ball white\b/i.test(haystack)) {
-    return false;
-  }
-  if (constraints.preferredColor === 'black' && /\bwhite\b/i.test(haystack) && !/\bblack\b/i.test(haystack)) {
-    return false;
-  }
-  if (constraints.preferredColor === 'white' && /\bblack\b/i.test(haystack) && !/\bwhite\b/i.test(haystack)) {
     return false;
   }
 
@@ -544,6 +540,30 @@ router.post('/search-image', upload.single('image'), async (req, res) => {
     const duration = Date.now() - startTime;
 
     console.log(`✅ [${searchId}] Done in ${duration}ms — ${resultCount} results\n`);
+
+    // ── DB logging (fire-and-forget) ──
+    logSearch({
+      source: username ? 'instagram' : 'web',
+      username: username || null,
+      query: searchQuery,
+      imageFilename: req.file?.filename || null,
+      durationMs: duration,
+      resultCount,
+    }).then(dbId => {
+      if (!dbId) return;
+      if (primaryItem) {
+        logBrand({
+          searchId: dbId,
+          brand: primaryItem.brand,
+          itemType: primaryItem.item_type,
+          color: primaryItem.color,
+          style: primaryItem.style,
+          material: primaryItem.material,
+          confidence: vision?.confidence,
+        });
+      }
+      logResults(dbId, primaryRanked.results || []);
+    }).catch(() => {});
 
     res.json({
       dm_text: dmText,

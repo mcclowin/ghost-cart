@@ -239,6 +239,28 @@ function isProductLikeLensCandidate(item) {
   return PRODUCT_HOST_BONUS.some(pattern => pattern.test(url));
 }
 
+/**
+ * Clean a Lens title into a usable search query.
+ * Minimal cleanup: strip store junk, sizes, gendered/non-English terms.
+ * Keep colors and model identifiers exactly as Lens returned them.
+ */
+function cleanLensTitle(title) {
+  return String(title || '')
+    .replace(/^buy\s+/i, '')
+    // Strip non-English gendered terms
+    .replace(/\b(?:herren|damen|homme|femme|donna|uomo|hombre|mujer)\b/ig, ' ')
+    // Strip non-English color terms (keep English colors as-is from Lens)
+    .replace(/\b(?:weiss|weiß|schwarz|noir|blanc|blanche|bianco|bianca|nero|nera|blanco|blanca|negro|negra|grau|gris)\b/ig, ' ')
+    // Strip sizes and gendered words
+    .replace(/\b(?:men|women|man|woman|mens|womens|unisex)\b/ig, ' ')
+    .replace(/\b(?:us|uk|eu)\s*\d{1,2}(?:\.\d+)?\b/ig, ' ')
+    // Strip trailing SKU/ellipsis junk
+    .replace(/\s+-\s+[A-Z0-9-]+(?:\s*\.\.\.)?$/i, '')
+    .replace(/\s*\.\.\.$/, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 export function inferLensExactMatch(lensResults = {}, visionItem = null) {
   const candidates = [...(lensResults.exactMatches || []), ...(lensResults.visualMatches || [])]
     .map(item => ({
@@ -251,6 +273,7 @@ export function inferLensExactMatch(lensResults = {}, visionItem = null) {
   const pool = productLike.length > 0 ? productLike : candidates;
   if (pool.length === 0) return null;
 
+  // Rank candidates: support (how many similar titles), position, source, specificity
   const ranked = pool
     .map((item, index) => {
       const support = pool.reduce((count, other) => (
@@ -276,32 +299,30 @@ export function inferLensExactMatch(lensResults = {}, visionItem = null) {
     return null;
   }
 
+  // Pick the best title from the cluster — most specific, product-like, English
   const cluster = pool.filter(item => overlapScore(winner.title, item.title) >= 0.45);
-  const preferredColor = chooseClusterColor(cluster, visionItem);
-  const rankedQueryCandidates = cluster
+  const bestTitle = cluster
     .map(item => {
-      const canonicalTitle = canonicaliseExactTitle(item.title);
-      let score = titleSpecificityScore(canonicalTitle);
+      const cleaned = cleanLensTitle(item.title);
+      let score = titleSpecificityScore(cleaned);
       if (item.source === 'google_lens_exact') score += 4;
       if (isProductLikeLensCandidate(item)) score += 4;
-      if (/triple black|triple white/i.test(item.title)) score += 6;
-      if (/[A-Z]\d{2,}|S\d{2,}/.test(item.title)) score += 3;
-      return { item, canonicalTitle, score };
+      // Prefer titles with model numbers (e.g. "Kayano 14", "1201A019")
+      if (/[A-Z]\d{2,}|S\d{2,}|\d{3,}[A-Z]/.test(item.title)) score += 3;
+      // Penalise very short or very long titles
+      const words = cleaned.split(/\s+/).length;
+      if (words < 3) score -= 4;
+      if (words > 10) score -= 2;
+      return { cleaned, score };
     })
-    .filter(entry => entry.canonicalTitle)
-    .sort((a, b) => b.score - a.score);
-
-  const chosenQueryTitle = rankedQueryCandidates[0]?.canonicalTitle || canonicaliseExactTitle(winner.title);
-  const modelCore = stripColorTerms(chosenQueryTitle);
-  const exactModel = preferredColor && !new RegExp(`\\b${preferredColor.replace(/\s+/g, '\\s+')}\\b`, 'i').test(modelCore)
-    ? `${modelCore} ${preferredColor}`.trim()
-    : modelCore;
+    .filter(entry => entry.cleaned)
+    .sort((a, b) => b.score - a.score)[0]?.cleaned || cleanLensTitle(winner.title);
 
   return {
-    exactModel,
-    exactSearchQuery: exactModel,
+    exactModel: bestTitle,
+    exactSearchQuery: bestTitle,
     confidence: winner.support >= 3 ? 'high' : 'medium',
-    rationale: `Lens consensus selected "${modelCore}" from ${winner.support} overlapping product-like hits${preferredColor ? ` and preferred color "${preferredColor}"` : ''}.`,
+    rationale: `Lens consensus: "${bestTitle}" from ${winner.support} overlapping product-like hits.`,
     sourceUrl: winner.url,
     support: winner.support,
   };
@@ -370,6 +391,16 @@ async function searchBrightDataLens(imageUrl, options = {}) {
       }
 
       const data = await response.json();
+      // Log the full Lens response structure so we can see what fields are available
+      const topKeys = Object.keys(data);
+      console.log(`   🔬 Lens response keys: ${topKeys.join(', ')}`);
+      for (const key of topKeys) {
+        if (key !== 'organic' && key !== 'images') {
+          const val = data[key];
+          const preview = typeof val === 'object' ? JSON.stringify(val).slice(0, 300) : String(val).slice(0, 300);
+          console.log(`   📋 Lens.${key}: ${preview}`);
+        }
+      }
       const exactMatches = (data.organic || [])
         .filter(item => item.link)
         .slice(0, options.limit || 8)

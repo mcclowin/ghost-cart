@@ -5,6 +5,7 @@ import { resolveShoppingResults, validateResolvedResults } from '../services/sea
 import { hasFirecrawlKey } from '../services/firecrawl.js';
 import { randomUUID } from 'crypto';
 import { loadResult } from '../services/results-store.js';
+import { logSearch, logResults } from '../services/db.js';
 
 const router = Router();
 const searchResults = new Map();
@@ -98,6 +99,17 @@ router.post('/search', async (req, res) => {
       createdAt: new Date().toISOString(),
     };
     searchResults.set(searchId, searchRecord);
+
+    // ── DB logging (fire-and-forget) ──
+    logSearch({
+      source: 'web',
+      query,
+      durationMs: duration,
+      resultCount: ranked.results?.length || 0,
+    }).then(dbId => {
+      if (!dbId) return;
+      logResults(dbId, ranked.results || []);
+    }).catch(() => {});
 
     res.json({
       searchId, query,
