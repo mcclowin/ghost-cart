@@ -9,24 +9,26 @@ const AI_DATASET_ID = 'gd_mcswdt6z2elth3zqr2';
 
 function buildLensDescription(lensResults) {
   const related = (lensResults.relatedSearches || []).filter(Boolean);
-  const organicTitles = (lensResults.exactMatches || [])
-    .map(o => `[${o.marketplace}] ${o.title}`)
-    .filter(Boolean)
-    .slice(0, 10);
-  const visualTitles = (lensResults.visualMatches || [])
-    .map(i => `[${i.marketplace}] ${i.title}`)
-    .filter(Boolean)
-    .slice(0, 10);
-  const offerTitles = (lensResults.offers || [])
-    .map(o => `${o.title} — ${o.marketplace} — ${o.price?.display || ''}`)
-    .filter(Boolean);
+
+  // Send ALL data with full titles AND URLs (URLs often contain colorway in slug)
+  const organicItems = (lensResults.exactMatches || [])
+    .filter(o => o.title)
+    .map(o => `[${o.marketplace}] ${o.title} — ${o.url || ''}`);
+
+  const visualItems = (lensResults.visualMatches || [])
+    .filter(i => i.title)
+    .map(i => `[${i.marketplace}] ${i.title} — ${i.url || ''}`);
+
+  const offerItems = (lensResults.offers || [])
+    .filter(o => o.title || o.url)
+    .map(o => `${o.title} — ${o.marketplace} — ${o.price?.display || ''} — ${o.url || ''}`);
 
   const parts = [];
-  if (related.length > 0) parts.push(`Google suggests: ${related.join(', ')}`);
-  if (offerTitles.length > 0) parts.push(`Shopping: ${offerTitles.join('; ')}`);
-  if (organicTitles.length > 0) parts.push(`Web: ${organicTitles.join('; ')}`);
-  if (visualTitles.length > 0) parts.push(`Visual: ${visualTitles.join('; ')}`);
-  return parts.join('. ');
+  if (related.length > 0) parts.push(`Google suggests this is: ${related.join(', ')}`);
+  if (offerItems.length > 0) parts.push(`Shopping offers:\n${offerItems.join('\n')}`);
+  if (organicItems.length > 0) parts.push(`Web results:\n${organicItems.join('\n')}`);
+  if (visualItems.length > 0) parts.push(`Visual matches:\n${visualItems.join('\n')}`);
+  return parts.join('\n\n');
 }
 
 /**
