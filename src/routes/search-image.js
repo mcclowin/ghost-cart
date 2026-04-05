@@ -578,7 +578,7 @@ router.post('/search-image', upload.single('image'), async (req, res) => {
     // ── Step 2: AI Mode identification (primary) ──
     console.log('🤖 Step 2: Google AI Mode identification...');
     const aiResult = await aiModeIdentify(lensResults);
-    const discovery = parseAiModeAnswer(aiResult, lensResults, searchQuery);
+    const discovery = await parseAiModeAnswer(aiResult, lensResults, searchQuery, llm);
 
     if (!discovery.alternativeSearchQuery) {
       discovery.alternativeSearchQuery = searchQuery;

@@ -91,10 +91,10 @@ IMPORTANT: Look carefully at ALL clues — Instagram handles (@alo = Alo Yoga), 
 }
 
 /**
- * Use the AI Mode answer directly — no regex parsing.
- * The answer_text IS the identification. The links_attached ARE the buy links.
+ * Use Venice LLM to extract a clean product name from AI Mode's answer.
+ * AI Mode gives us the rich identification, LLM just formats it for search.
  */
-export function parseAiModeAnswer(aiResult, lensResults, fallbackQuery) {
+export async function parseAiModeAnswer(aiResult, lensResults, fallbackQuery, llm) {
   if (!aiResult?.answer) {
     return {
       hasExactModel: false,
@@ -105,52 +105,56 @@ export function parseAiModeAnswer(aiResult, lensResults, fallbackQuery) {
       rationale: 'AI Mode returned no answer',
       source: 'ai_mode_empty',
       aiModeLinks: [],
+      aiModeAnswer: null,
     };
   }
 
   const answer = aiResult.answer;
   const links = aiResult.links || [];
-
-  // The first sentence usually contains the product identification
-  // e.g. "the product is the Alo Yoga tracksuit in their Candy Heart Pink colorway"
-  // Use the first ~150 chars as the display title, cleaned up
   const firstSentence = answer.split(/[.!]\s/)[0] || answer.slice(0, 150);
 
-  // For exactSearchQuery: extract product name from links if available
-  // Link text often has clean product names like "Accolade Crew Neck Pullover"
-  const productLinks = links.filter(l =>
-    l.url && !/google\.com\/search/.test(l.url) && l.text && l.text !== '?'
-  );
-  const linkProductNames = productLinks.map(l => l.text).filter(Boolean);
-
-  // Build exactSearchQuery from link product names or from the answer
+  // Use Venice LLM to extract clean product name from AI Mode's answer
   let exactSearchQuery = null;
-  if (linkProductNames.length > 0) {
-    // Use the first product link name — it's usually the cleanest
-    exactSearchQuery = linkProductNames[0];
+  let alternativeSearchQuery = fallbackQuery || 'clothing';
+
+  try {
+    const model = process.env.LLM_PROVIDER === 'venice' ? 'venice-uncensored' : 'gpt-4o-mini';
+    console.log(`   🧠 Extracting product name from AI Mode answer...`);
+    const resp = await llm.chat.completions.create({
+      model,
+      messages: [
+        {
+          role: 'system',
+          content: `Extract the exact product name from this AI identification for a shopping search.
+Return JSON only:
+{
+  "exactProduct": "Brand Model Colorway",
+  "alternativeSearch": "Brand Model"
+}
+Rules:
+- exactProduct: include brand + model name + colorway. E.g. "Alo Yoga Sweet Escape Zip Up Hoodie Candy Heart Pink"
+- alternativeSearch: just brand + general product type. E.g. "Alo Yoga zip up hoodie"
+- If multiple items (e.g. a set), use the main/top item
+- No explanations, just the JSON`,
+        },
+        { role: 'user', content: answer },
+      ],
+      response_format: { type: 'json_object' },
+    });
+
+    const parsed = JSON.parse(resp.choices[0].message.content);
+    exactSearchQuery = parsed.exactProduct || null;
+    alternativeSearchQuery = parsed.alternativeSearch || alternativeSearchQuery;
+    console.log(`   🧠 Extracted: "${exactSearchQuery}"`);
+    console.log(`   🧠 Alternative: "${alternativeSearchQuery}"`);
+  } catch (err) {
+    console.log(`   ⚠️ LLM extraction failed: ${err.message}`);
+    // Fallback: use first sentence
+    exactSearchQuery = firstSentence.replace(/^Based on.*?,\s*/i, '').slice(0, 100);
   }
 
-  // If no good link names, try to extract from the answer text
-  if (!exactSearchQuery) {
-    // Look for "the product is [the] XXXXX" pattern
-    const productMatch = answer.match(/(?:the product is|this is|identified as|you photographed is)\s+(?:the\s+)?(.{10,100}?)(?:\.|,\s*(?:worn|from|in their))/i);
-    if (productMatch) {
-      exactSearchQuery = productMatch[1].trim();
-    }
-  }
-
-  const hasExactModel = !!exactSearchQuery;
+  const hasExactModel = !!exactSearchQuery && exactSearchQuery.length > 5;
   const confidence = hasExactModel ? 'high' : 'low';
-
-  // For alternatives: use a broader version or fallback
-  const alternativeSearchQuery = exactSearchQuery
-    ? exactSearchQuery.split(/\s+/).slice(0, 4).join(' ')
-    : fallbackQuery || 'clothing';
-
-  console.log(`   🤖 AI Mode answer: "${answer.slice(0, 200)}..."`);
-  console.log(`   🤖 Product links: ${linkProductNames.join(', ') || 'none'}`);
-  console.log(`   🤖 exactSearchQuery: "${exactSearchQuery || 'none'}"`);
-  console.log(`   🤖 alternativeSearchQuery: "${alternativeSearchQuery}"`);
 
   return {
     hasExactModel,
