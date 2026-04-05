@@ -361,11 +361,16 @@ async function searchBrightDataLens(imageUrl, options = {}) {
     return { exactMatches: [], visualMatches: [] };
   }
 
+  const lensCountry = process.env.LENS_COUNTRY || 'uk';
+  const brightdataCountry = lensCountry === 'uk' ? 'gb' : lensCountry;
+
   const lensUrl = new URL('https://lens.google.com/uploadbyurl');
   lensUrl.searchParams.set('url', imageUrl);
+  lensUrl.searchParams.set('hl', options.language || 'en');
+  lensUrl.searchParams.set('gl', lensCountry);
   lensUrl.searchParams.set('brd_json', '1');
 
-  console.log('   🔍 Google Lens: searching by image via Bright Data...');
+  console.log(`   🔍 Google Lens: searching via Bright Data (country: ${lensCountry})...`);
 
   let lastError = null;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -380,6 +385,7 @@ async function searchBrightDataLens(imageUrl, options = {}) {
           zone,
           url: lensUrl.toString(),
           format: 'raw',
+          country: brightdataCountry,
         }),
       });
 
