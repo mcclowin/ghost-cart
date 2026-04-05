@@ -15,9 +15,9 @@ import { mkdirSync, existsSync } from 'fs';
 import { unlink } from 'fs/promises';
 import { extname } from 'path';
 import { analyzeClothingImage } from '../services/vision.js';
-import { parseQuery, rankResults, reconcileImageDiscovery } from '../services/venice.js';
+import { parseQuery, rankResults, reconcileImageDiscovery, llm } from '../services/venice.js';
 import { searchGoogleShopping } from '../services/search-serp.js';
-import { resolveShoppingResults } from '../services/search-web.js';
+import { resolveShoppingResults, searchTavily } from '../services/search-web.js';
 import { inferLensExactMatch, searchGoogleLens } from '../services/search-lens.js';
 import { saveResult } from '../services/results-store.js';
 import { logSearch, logBrand, logResults } from '../services/db.js';
@@ -141,39 +141,35 @@ function buildBackfillCandidates(results, parsed, existingUrls, desiredCount) {
     }));
 }
 
-// ── Lens-first exact matches (deterministic) ──
-const SOCIAL_URL_PATTERN = /instagram|youtube|reddit|pinterest|facebook|tiktok|twitter|threads/i;
-const CATEGORY_URL_PATTERN = /\/collections?\b|\/category\b|\/search\?|\/shop\/?$|\/brand\//i;
+// ── Lens-first exact matches with LLM sanity check ──
+const SOCIAL_URL_PATTERN = /instagram|youtube|reddit|pinterest|facebook|tiktok|twitter|threads|linkedin/i;
 
-function isBuyableUrl(url) {
-  if (!url) return false;
-  if (SOCIAL_URL_PATTERN.test(url)) return false;
-  if (CATEGORY_URL_PATTERN.test(url)) return false;
-  return true;
+function isObviouslyNotAStore(url) {
+  if (!url) return true;
+  if (SOCIAL_URL_PATTERN.test(url)) return true;
+  return false;
 }
 
-function buildExactMatchesFromLens(lensResults, discovery) {
+async function buildExactMatchesFromLens(lensResults, discovery) {
+  const productName = discovery.exactModel || discovery.exactSearchQuery || '';
+
+  // ── Step 3a-c: Collect all candidate URLs from Lens ──
   const allCandidates = [];
 
-  // 1. Offers — best quality (direct buy links with prices)
   for (const offer of (lensResults.offers || [])) {
-    if (!isBuyableUrl(offer.url)) continue;
-    if (isUsedProduct(offer)) continue;
+    if (isObviouslyNotAStore(offer.url) || isUsedProduct(offer)) continue;
     allCandidates.push({
       marketplace: offer.marketplace || 'Unknown',
-      title: offer.title || discovery.exactModel || '',
+      title: offer.title || productName,
       price: offer.price ? (typeof offer.price === 'string' ? offer.price : offer.price.display || '') : '',
       url: offer.url,
       image: offer.image || null,
       source: 'lens_offer',
-      availability: offer.availability || null,
     });
   }
 
-  // 2. Organic results — direct store URLs
   for (const item of (lensResults.exactMatches || [])) {
-    if (!isBuyableUrl(item.url)) continue;
-    if (isUsedProduct(item)) continue;
+    if (isObviouslyNotAStore(item.url) || isUsedProduct(item)) continue;
     allCandidates.push({
       marketplace: item.marketplace || 'Unknown',
       title: item.title || '',
@@ -184,10 +180,8 @@ function buildExactMatchesFromLens(lensResults, discovery) {
     });
   }
 
-  // 3. Visual matches — have images
   for (const item of (lensResults.visualMatches || [])) {
-    if (!isBuyableUrl(item.url)) continue;
-    if (isUsedProduct(item)) continue;
+    if (isObviouslyNotAStore(item.url) || isUsedProduct(item)) continue;
     allCandidates.push({
       marketplace: item.marketplace || 'Unknown',
       title: item.title || '',
@@ -198,23 +192,45 @@ function buildExactMatchesFromLens(lensResults, discovery) {
     });
   }
 
+  // ── Step 3d: Tavily web search for additional store links ──
+  if (productName) {
+    console.log(`   🔎 Web search: "buy ${productName}"`);
+    const webResults = await searchTavily(`buy ${productName}`, [], 8).catch(() => []);
+    for (const result of webResults) {
+      if (isObviouslyNotAStore(result.url) || isUsedProduct({ url: result.url, title: result.title })) continue;
+      allCandidates.push({
+        marketplace: result.url ? new URL(result.url).hostname.replace('www.', '') : 'Unknown',
+        title: result.title || '',
+        price: '',
+        url: result.url,
+        image: null,
+        source: 'web_search',
+      });
+    }
+    console.log(`   → Web search added ${webResults.length} results`);
+  }
+
   // Deduplicate by URL
   const seen = new Set();
   const deduped = allCandidates.filter(item => {
-    if (seen.has(item.url)) return false;
+    if (!item.url || seen.has(item.url)) return false;
     seen.add(item.url);
     return true;
   });
 
-  // Log what we found
-  console.log(`   🎯 Lens exact candidates: ${deduped.length} buyable (${allCandidates.length - deduped.length} dupes removed)`);
-  for (const c of deduped.slice(0, 8)) {
-    const priceStr = c.price ? ` ${c.price}` : '';
-    const imgStr = c.image ? ' 🖼️' : '';
-    console.log(`      ${c.source === 'lens_offer' ? '💰' : '📄'} [${c.marketplace}]${priceStr}${imgStr} — ${c.url.slice(0, 70)}`);
+  console.log(`   📋 Total candidates before LLM check: ${deduped.length}`);
+
+  // ── Step 4: LLM sanity check ──
+  const verified = await llmSanityCheck(deduped, productName);
+
+  console.log(`   ✅ LLM verified: ${verified.length} results`);
+  for (const v of verified.slice(0, 6)) {
+    const imgStr = v.image ? ' 🖼️' : '';
+    const priceStr = v.price ? ` ${v.price}` : '';
+    console.log(`      [${v.marketplace}]${priceStr}${imgStr} — ${v.url.slice(0, 70)}`);
   }
 
-  const results = deduped.slice(0, 4).map((item, index) => ({
+  const results = verified.slice(0, 4).map((item, index) => ({
     rank: index + 1,
     marketplace: item.marketplace,
     title: item.title,
@@ -233,6 +249,65 @@ function buildExactMatchesFromLens(lensResults, discovery) {
     },
     query: discovery.exactSearchQuery,
   };
+}
+
+/**
+ * LLM sanity check: verify each candidate is a buyable product page
+ * for the correct product and colorway.
+ */
+async function llmSanityCheck(candidates, productName) {
+  if (candidates.length === 0) return [];
+
+  const items = candidates.map((c, i) => ({
+    id: i,
+    title: c.title?.slice(0, 100) || '',
+    url: c.url,
+    marketplace: c.marketplace,
+    price: c.price || '',
+  }));
+
+  try {
+    console.log(`   🧠 LLM sanity check: ${items.length} candidates for "${productName}"`);
+    const response = await llm.chat.completions.create({
+      model: process.env.LLM_PROVIDER === 'venice' ? 'venice-uncensored' : 'gpt-4o-mini',
+      messages: [
+        {
+          role: 'system',
+          content: `You verify shopping search results. For each candidate, determine if it is:
+1. A real online store where you can BUY the product (not a review site, blog, social media, news article, or brand homepage)
+2. The CORRECT product: "${productName}"
+3. The correct colorway/variant (not a different color of the same model)
+
+Return JSON only — an array of IDs that pass ALL three checks:
+{"approved": [0, 2, 5]}
+
+Be strict:
+- Category pages listing many products → reject
+- Review/editorial sites (RunRepeat, Hypebeast, Complex, WornOnTV) → reject
+- Brand homepages or "shop all" pages → reject
+- Different colorway of same model → reject
+- Used/resale/consignment → reject
+- Actual product pages where you can add to cart → approve`
+        },
+        {
+          role: 'user',
+          content: JSON.stringify({ product: productName, candidates: items }),
+        },
+      ],
+      response_format: { type: 'json_object' },
+    });
+
+    const content = response.choices[0].message.content;
+    const parsed = JSON.parse(content);
+    const approvedIds = new Set(parsed.approved || []);
+
+    console.log(`   → LLM approved ${approvedIds.size}/${items.length} candidates`);
+
+    return candidates.filter((_, i) => approvedIds.has(i));
+  } catch (err) {
+    console.error(`   ⚠️ LLM sanity check failed: ${err.message} — passing all candidates through`);
+    return candidates;
+  }
 }
 
 // ── Alternatives: Google Shopping + Tavily ──
@@ -380,7 +455,7 @@ router.post('/search-image', upload.single('image'), async (req, res) => {
     let exactBranch = null;
     if (discovery.hasExactModel && discovery.exactSearchQuery) {
       console.log('🎯 Step 4a: Building exact matches from Lens data...');
-      exactBranch = buildExactMatchesFromLens(lensResults, discovery);
+      exactBranch = await buildExactMatchesFromLens(lensResults, discovery);
     }
 
     // ── Step 4b: Alternatives from Google Shopping + Tavily ──
