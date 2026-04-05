@@ -141,6 +141,10 @@ function buildBackfillCandidates(results, parsed, existingUrls, desiredCount) {
     }));
 }
 
+function getDomain(url) {
+  try { return new URL(url).hostname.replace('www.', ''); } catch { return ''; }
+}
+
 // ── Lens-first exact matches with LLM sanity check ──
 const SOCIAL_URL_PATTERN = /instagram|youtube|reddit|pinterest|facebook|tiktok|twitter|threads|linkedin/i;
 
@@ -222,6 +226,24 @@ async function buildExactMatchesFromLens(lensResults, discovery) {
 
   // ── Step 4: LLM sanity check ──
   const verified = await llmSanityCheck(deduped, productName);
+
+  // ── Resolve missing images from visual matches ──
+  const visualImages = (lensResults.visualMatches || [])
+    .filter(v => v.image && v.url)
+    .map(v => ({ url: v.url, image: v.image, domain: getDomain(v.url) }));
+  const fallbackImage = visualImages[0]?.image || null;
+
+  for (const item of verified) {
+    if (item.image) continue;
+    // Try exact URL match first
+    const exactMatch = visualImages.find(v => v.url === item.url);
+    if (exactMatch) { item.image = exactMatch.image; continue; }
+    // Try domain match (same store, likely same product image)
+    const domainMatch = visualImages.find(v => v.domain === getDomain(item.url));
+    if (domainMatch) { item.image = domainMatch.image; continue; }
+    // Fallback: first visual match image (it's the identified product)
+    item.image = fallbackImage;
+  }
 
   console.log(`   ✅ LLM verified: ${verified.length} results`);
   for (const v of verified.slice(0, 6)) {

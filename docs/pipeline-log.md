@@ -69,7 +69,38 @@ Step 4: Alternatives ONLY: Google Shopping + Tavily (unchanged)
 **What this removes from exact branch:** Google Shopping search, Tavily resolution, SerpAPI Product Offers
 **What this keeps:** All Lens data (offers + organic + visual), URL classification, used product filter
 **Risk:** If Lens returns few buyable URLs, exact matches will be sparse. Mitigated by alternatives section still running full pipeline.
-**Image issue:** Lens organic has no thumbnails. Use visual match images or Google Shopping thumbnails as fallback.
+**Image fix:** Match verified results with visual match images by URL or domain. Fallback to first visual match image.
+
+### Implementation: 2026-04-05 — Lens-first with LLM sanity check + web search
+
+**Implemented as:**
+```
+Step 3a-c: Collect URLs from Lens (offers + organic + visual)
+Step 3d: Tavily web search "buy [product name]" for extra stores
+Step 4: LLM sanity check — each candidate verified for:
+   - Is it a buyable product page?
+   - Is it the correct product?
+   - Is it the correct colorway?
+Step 5: Resolve images from visual matches (URL match → domain match → fallback)
+```
+
+**Test results (2026-04-05):**
+| Query | Candidates | LLM approved | Quality | Issues |
+|-------|-----------|-------------|---------|--------|
+| NB 740 Rich Oak (no offers) | 16 | 3 | Good — all correct product/store | No images (fixed with visual match fallback) |
+| NB 740 Rich Oak (with offers) | 14 | — | Error (old shape refs) | Fixed |
+| Loro Piana Croco | ~12 | 3+ | Good — correct stores with prices | Location varies (India/UAE/US) |
+| AV Sequin Dress | ~15 | 3 | Good — 2nd link spot on | 1st link geo-restricted, 3rd link wrong |
+
+### Open issue: Bright Data geo-location
+Bright Data routes through random countries each request. Results vary dramatically:
+- en-IN → Myntra, Ajio (Indian stores, ₹ prices)
+- en-DE → THE OUTNET (€ prices)
+- en-US → GOAT, ASOS, Shopbop ($, best results)
+- en-ZA → Truworths (South African stores)
+- en-AE → sands-uae.com (UAE stores)
+
+**Action needed:** Pin Bright Data to US or UK exit node. Researching API parameters.
 
 ### Tested against:
 | Query | Lens offers | Lens buyable organic | Would work? |
