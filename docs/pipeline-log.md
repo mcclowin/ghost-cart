@@ -127,6 +127,45 @@ Step 5: Resolve images from visual matches (URL match → domain match → fallb
 
 **Image resolution chain:** Lens visual match (URL/domain) → OG fetch → Firecrawl
 
+### Checkpoint: AI Mode replaces Venice LLM for identification (2026-04-05)
+
+**Problem:** Venice LLM reconciliation was inconsistent — missed brands when Lens titles were social media posts, simplified colorway names, returned "none" for items it couldn't identify.
+
+**Testing:**
+| Product | Venice LLM | AI Mode (text) | AI Mode (browser) |
+|---------|-----------|----------------|-------------------|
+| NB 740 Rich Oak | ✅ "NB 740 Rich Oak Bisque Pecan" | ✅ Same | ✅ Same |
+| AV Dress Orange | ✅ "AV Metallic Sequin One-Shoulder" | ✅ Same + colorway "Orange" | ✅ Same |
+| Loro Piana Croco | ✅ "LP Summer Charms Walk Eucalyptus" | ✅ Same (wrong color "Green Lagoon") | ✅ "Croco Touch" (best) |
+| Nike Mini Swoosh | ❌ "none" | ❌ "Oner Active" (wrong) | ✅ "Nike" in links |
+| Alo Yoga (Georgina) | ❌ "none" | ✅ "Alo Yoga Airbrush Corset Candy Heart Pink" | N/A |
+| Floor Lamp | ❌ "none" | ✅ "där lighting Bond Task Floor Lamp" | ✅ "MODEMODERN MD.8818.01FL" |
+
+**Decision:** Replace Venice LLM reconciliation with AI Mode as primary identification.
+- AI Mode wins on 4/6 cases (Georgina, Lamp, and matches on NB/AV)
+- Venice kept as comparison log (dead end, not used for results)
+- AI Mode cost: $0.0015/query (negligible)
+
+**Implementation:**
+- New file: `src/services/ai-mode.js` — `aiModeIdentify()` + `parseAiModeAnswer()`
+- `search-image.js` Step 3: AI Mode replaces `reconcileImageDiscovery()` as primary
+- Venice LLM runs in parallel for comparison logging only
+- No other pipeline changes
+
+### Proposed: Full pipeline redesign with AI Mode + Scraping Browser
+
+```
+Step 1: Lens SERP (image → raw data: offers, organic, visual, related_search)
+Step 2: AI Mode text (Lens data → exact product ID with brand/model/colorway)
+Step 3: Build exact matches from Lens offers + organic + visual (filtered, deduped)
+Step 4: LLM sanity check using AI Mode's identification
+Step 5: Firecrawl for images on approved results
+Step 6: Google Shopping + Tavily for alternatives
+Optional: Scraping Browser for AI Mode when text approach fails (flaky, $0.02-0.03)
+```
+
+Stored for future implementation. Current change only swaps Step 2.
+
 ### Open issue: Bright Data geo-location
 Bright Data routes through random countries each request. Results vary dramatically:
 - en-IN → Myntra, Ajio (Indian stores, ₹ prices)

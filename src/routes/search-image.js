@@ -15,10 +15,11 @@ import { mkdirSync, existsSync } from 'fs';
 import { unlink } from 'fs/promises';
 import { extname } from 'path';
 import { analyzeClothingImage } from '../services/vision.js';
-import { parseQuery, rankResults, reconcileImageDiscovery, llm } from '../services/venice.js';
+import { parseQuery, rankResults, llm } from '../services/venice.js';
 import { searchGoogleShopping } from '../services/search-serp.js';
 import { resolveShoppingResults, searchTavily } from '../services/search-web.js';
-import { inferLensExactMatch, searchGoogleLens } from '../services/search-lens.js';
+import { searchGoogleLens } from '../services/search-lens.js';
+import { aiModeIdentify, parseAiModeAnswer } from '../services/ai-mode.js';
 import { saveResult } from '../services/results-store.js';
 import { logSearch, logBrand, logResults } from '../services/db.js';
 
@@ -574,44 +575,29 @@ router.post('/search-image', upload.single('image'), async (req, res) => {
     } else {
       console.log(`   👁️ Vision: failed, using caption fallback → "${searchQuery}"`);
     }
-    console.log('🧩 Step 3: Reconciling discovery...');
-    // LLM reconciliation is the primary path — it can read all Lens titles
-    // and understand brand vs reseller names. Heuristic is fallback only.
-    const discovery = await reconcileImageDiscovery({
-      caption: caption || '',
-      // Vision excluded from reconciliation — it contaminates with wrong brands
-      // (e.g. says "NB 1140" when Lens correctly says "NB 740")
-      lensResults,
-    }).catch(err => {
-      console.error('Discovery reconciliation failed, falling back to heuristic:', err.message);
-      // Fallback: use heuristic consensus if LLM fails
-      const heuristicResult = inferLensExactMatch(lensResults, primaryItem);
-      if (heuristicResult) {
-        heuristicResult.hasExactModel = true;
-        heuristicResult.alternativeSearchQuery = searchQuery;
-        heuristicResult.source = 'lens_heuristic_fallback';
-        return heuristicResult;
-      }
-      return {
-        hasExactModel: false,
-        exactModel: null,
-        exactSearchQuery: null,
-        confidence: 'low',
-        alternativeSearchQuery: searchQuery,
-        rationale: 'Reconciliation failed',
-      };
-    });
+    // ── Step 2: AI Mode identification (primary) ──
+    console.log('🤖 Step 2: Google AI Mode identification...');
+    const aiResult = await aiModeIdentify(lensResults);
+    const discovery = parseAiModeAnswer(aiResult, lensResults, searchQuery);
 
     if (!discovery.alternativeSearchQuery) {
       discovery.alternativeSearchQuery = searchQuery;
     }
 
-    // ── Compare all three ID sources ──
-    console.log(`   ┌─ ID COMPARISON ─────────────────────────────────────`);
-    console.log(`   │ 1. Lens related_search: ${(lensResults.relatedSearches || []).join(', ') || 'none'}`);
-    console.log(`   │ 2. Google AI Mode:      ${lensResults.aiModeResult ? 'fetched (see 🤖 logs above)' : 'not available'}`);
-    console.log(`   │ 3. Our LLM reconciled:  model="${discovery.exactModel || 'none'}" query="${discovery.exactSearchQuery || 'none'}"`);
-    console.log(`   │    confidence: ${discovery.confidence || '?'} | rationale: ${discovery.rationale || '?'}`);
+    // ── Venice LLM reconciliation (comparison only — not used for results) ──
+    const llmDiscovery = await reconcileImageDiscovery({
+      caption: caption || '',
+      lensResults,
+    }).catch(err => {
+      console.log(`   📊 [LLM comparison] failed: ${err.message}`);
+      return { exactModel: 'error', exactSearchQuery: 'error', confidence: 'error' };
+    });
+
+    console.log(`   ┌─ IDENTIFICATION ────────────────────────────────────`);
+    console.log(`   │ Lens related_search: ${(lensResults.relatedSearches || []).join(', ') || 'none'}`);
+    console.log(`   │ AI Mode (PRIMARY):   "${discovery.exactSearchQuery || 'none'}" [${discovery.confidence}]`);
+    console.log(`   │ Venice LLM (compare): "${llmDiscovery.exactSearchQuery || 'none'}" [${llmDiscovery.confidence || '?'}]`);
+    console.log(`   │ AI Mode rationale: ${discovery.rationale}`);
     console.log(`   └──────────────────────────────────────────────────────`);
     console.log(`   🧭 Alternatives query → "${discovery.alternativeSearchQuery}"`);
 
