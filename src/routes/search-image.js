@@ -215,6 +215,27 @@ async function buildExactMatchesFromLens(lensResults, discovery) {
     console.log(`   → Web search added ${webResults.length} results`);
   }
 
+  // ── Step 3e: AI Mode links (direct product URLs from Google AI) ──
+  if (discovery.aiModeLinks?.length > 0) {
+    let aiLinksAdded = 0;
+    for (const link of discovery.aiModeLinks) {
+      if (!link.url || /google\.com\/search/.test(link.url)) continue;
+      if (isObviouslyNotAStore(link.url) || isUsedProduct({ url: link.url, title: link.text })) continue;
+      allCandidates.push({
+        marketplace: getDomain(link.url),
+        title: link.text || productName,
+        price: '',
+        url: link.url,
+        image: null,
+        source: 'ai_mode_link',
+      });
+      aiLinksAdded++;
+    }
+    if (aiLinksAdded > 0) {
+      console.log(`   🤖 AI Mode links added: ${aiLinksAdded}`);
+    }
+  }
+
   // Deduplicate by URL
   const seen = new Set();
   const deduped = allCandidates.filter(item => {
