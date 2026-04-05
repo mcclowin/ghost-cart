@@ -249,12 +249,12 @@ async function buildExactMatchesFromLens(lensResults, discovery) {
   // ── Step 4: LLM sanity check ──
   const verified = await llmSanityCheck(deduped, productName);
 
-  // ── Resolve images: 1) visual matches, 2) OG fetch, 3) Firecrawl ──
+  // Images already enriched by OG fetch + Firecrawl before LLM check.
+  // Also try visual match images for any still missing.
   const visualImages = (lensResults.visualMatches || [])
     .filter(v => v.image && v.url)
     .map(v => ({ url: v.url, image: v.image, domain: getDomain(v.url) }));
 
-  // Step 1: visual match images (URL or domain match)
   for (const item of verified) {
     if (item.image) continue;
     const exactMatch = visualImages.find(v => v.url === item.url);
@@ -263,35 +263,7 @@ async function buildExactMatchesFromLens(lensResults, discovery) {
     if (domainMatch) { item.image = domainMatch.image; continue; }
   }
 
-  // Step 2: Firecrawl for top 4 results still missing images
   const top4 = verified.slice(0, 4);
-  const needsImage = top4.filter(item => !item.image);
-  if (needsImage.length > 0 && process.env.FIRECRAWL_API_KEY) {
-    console.log(`   🔥 Firecrawl: scraping ${needsImage.length}/${top4.length} results for images...`);
-    const { firecrawlScrape } = await import('../services/firecrawl.js');
-    await Promise.all(needsImage.map(async (item) => {
-      try {
-        const result = await firecrawlScrape(item.url);
-        const metadata = result.body?.data?.metadata || {};
-        const ogImage = metadata.ogImage || metadata['og:image'] || '';
-        const pageTitle = metadata.title || metadata.ogTitle || '';
-        if (ogImage) {
-          item.image = ogImage;
-          console.log(`      🖼️ [${item.marketplace}] Firecrawl got image: ${ogImage.slice(0, 100)}`);
-        } else {
-          console.log(`      ❌ [${item.marketplace}] Firecrawl: page has no og:image`);
-        }
-        if (pageTitle && (!item.title || item.title.length < 20)) {
-          item.title = pageTitle;
-        }
-      } catch (err) {
-        console.log(`      ⚠️ [${item.marketplace}] Firecrawl failed: ${err.message}`);
-      }
-    }));
-  } else if (needsImage.length > 0) {
-    console.log(`   ⚠️ ${needsImage.length} results missing images (no FIRECRAWL_API_KEY)`);
-  }
-
   const withImages = top4.filter(v => v.image).length;
   console.log(`   ✅ Final: ${top4.length} results, ${withImages} with images`);
   for (const v of top4) {
@@ -392,17 +364,46 @@ async function llmSanityCheck(candidates, productName) {
     }
   }
   console.log(`   🌐 OG fetch: ${fetchOk} ok, ${fetchFail} failed, ${imagesFound} images extracted`);
-  // Log details for each candidate
+
+  // ── Firecrawl: scrape candidates that OG fetch failed on ──
+  const failedIndices = [];
   for (let i = 0; i < candidates.length; i++) {
-    const meta = metaResults[i];
+    if (!metaResults[i] && !isObviouslyNotAStore(candidates[i].url)) {
+      failedIndices.push(i);
+    }
+  }
+
+  if (failedIndices.length > 0 && process.env.FIRECRAWL_API_KEY) {
+    console.log(`   🔥 Firecrawl: scraping ${failedIndices.length} failed URLs...`);
+    const { firecrawlScrape } = await import('../services/firecrawl.js');
+    await Promise.all(failedIndices.map(async (i) => {
+      const c = candidates[i];
+      try {
+        const result = await firecrawlScrape(c.url);
+        const metadata = result.body?.data?.metadata || {};
+        const pageTitle = metadata.title || metadata.ogTitle || '';
+        const ogImage = metadata.ogImage || metadata['og:image'] || '';
+        const ogDesc = metadata.description || metadata.ogDescription || '';
+
+        if (pageTitle) c.ogTitle = pageTitle.slice(0, 200);
+        if (ogDesc) c.ogDesc = ogDesc.slice(0, 200);
+        if (ogImage && !c.image) { c.image = ogImage; imagesFound++; }
+
+        console.log(`      🔥 ${i}. [${c.marketplace}] title="${(pageTitle || '').slice(0, 60)}" og:image=${ogImage ? 'yes' : 'no'}`);
+      } catch (err) {
+        console.log(`      ⚠️ ${i}. [${c.marketplace}] Firecrawl also failed: ${err.message}`);
+      }
+    }));
+    console.log(`   🔥 Firecrawl enrichment done. Total images now: ${imagesFound}`);
+  }
+
+  // Log all candidates after enrichment
+  for (let i = 0; i < candidates.length; i++) {
     const c = candidates[i];
     const img = c.image ? '🖼️' : '  ';
     const title = (c.ogTitle || c.title || '').slice(0, 60);
-    if (meta) {
-      console.log(`      ${img} ${i}. [${c.marketplace}] "${title}" og:image=${meta.ogImage ? 'yes' : 'no'}`);
-    } else {
-      console.log(`      ⚠️ ${i}. [${c.marketplace}] fetch failed — ${c.url.slice(0, 60)}`);
-    }
+    const source = metaResults[i] ? '🌐' : (c.ogTitle ? '🔥' : '⚠️');
+    console.log(`      ${source} ${img} ${i}. [${c.marketplace}] "${title}"`);
   }
 
   const items = candidates.map((c, i) => ({
