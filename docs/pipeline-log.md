@@ -92,6 +92,19 @@ Step 5: Resolve images from visual matches (URL match → domain match → fallb
 | Loro Piana Croco | ~12 | 3+ | Good — correct stores with prices | Location varies (India/UAE/US) |
 | AV Sequin Dress | ~15 | 3 | Good — 2nd link spot on | 1st link geo-restricted, 3rd link wrong |
 
+### Round 2: OG meta fetch + Firecrawl comparison (2026-04-05)
+
+**Problem:** LLM sanity check was approving wrong colors because Lens titles don't include color info. LLM couldn't tell "Summer Charms Walk Loafers" is Grey vs Brown from title alone.
+
+**Fix (Option A — active):** Fetch og:title + og:image + og:description from each candidate URL before LLM check. Most product pages include color in og:title. Also gives us product images.
+
+**Fix (Option B — log only):** Firecrawl deep scrape of top 4 candidates. Logs content, add-to-cart detection, price detection. For comparison with Option A.
+
+**Also fixed:**
+- Dedup by domain (not URL) — same store can't appear twice
+- No wrong fallback images — only use images from exact URL or domain match
+- Detailed logging of every candidate sent to LLM and every approval/rejection
+
 ### Open issue: Bright Data geo-location
 Bright Data routes through random countries each request. Results vary dramatically:
 - en-IN → Myntra, Ajio (Indian stores, ₹ prices)

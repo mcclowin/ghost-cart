@@ -228,21 +228,19 @@ async function buildExactMatchesFromLens(lensResults, discovery) {
   const verified = await llmSanityCheck(deduped, productName);
 
   // ── Resolve missing images from visual matches ──
+  // Only use an image if it's from the exact same URL or same domain
+  // Do NOT use a random fallback — wrong image is worse than no image
   const visualImages = (lensResults.visualMatches || [])
     .filter(v => v.image && v.url)
     .map(v => ({ url: v.url, image: v.image, domain: getDomain(v.url) }));
-  const fallbackImage = visualImages[0]?.image || null;
 
   for (const item of verified) {
     if (item.image) continue;
-    // Try exact URL match first
     const exactMatch = visualImages.find(v => v.url === item.url);
     if (exactMatch) { item.image = exactMatch.image; continue; }
-    // Try domain match (same store, likely same product image)
     const domainMatch = visualImages.find(v => v.domain === getDomain(item.url));
     if (domainMatch) { item.image = domainMatch.image; continue; }
-    // Fallback: first visual match image (it's the identified product)
-    item.image = fallbackImage;
+    // No match — leave image as null rather than showing wrong product
   }
 
   console.log(`   ✅ LLM verified: ${verified.length} results`);
@@ -274,42 +272,120 @@ async function buildExactMatchesFromLens(lensResults, discovery) {
 }
 
 /**
- * LLM sanity check: verify each candidate is a buyable product page
- * for the correct product and colorway.
+ * Fetch og:title, og:image, and og:description from a URL's HTML meta tags.
+ * Lightweight — only fetches enough HTML to find the <head> tags.
+ */
+async function fetchOgMeta(url) {
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8000);
+    const res = await fetch(url, {
+      signal: controller.signal,
+      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; Kaboom/1.0)' },
+      redirect: 'follow',
+    });
+    clearTimeout(timeout);
+    if (!res.ok) return null;
+
+    // Read just the first ~20KB to find meta tags (don't download whole page)
+    const reader = res.body.getReader();
+    let html = '';
+    while (html.length < 20000) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      html += new TextDecoder().decode(value);
+    }
+    reader.cancel().catch(() => {});
+
+    const ogTitle = html.match(/<meta[^>]*property=["']og:title["'][^>]*content=["']([^"']+)["']/i)?.[1]
+      || html.match(/<meta[^>]*content=["']([^"']+)["'][^>]*property=["']og:title["']/i)?.[1]
+      || html.match(/<title[^>]*>([^<]+)<\/title>/i)?.[1]
+      || '';
+    const ogImage = html.match(/<meta[^>]*property=["']og:image["'][^>]*content=["']([^"']+)["']/i)?.[1]
+      || html.match(/<meta[^>]*content=["']([^"']+)["'][^>]*property=["']og:image["']/i)?.[1]
+      || '';
+    const ogDesc = html.match(/<meta[^>]*property=["']og:description["'][^>]*content=["']([^"']+)["']/i)?.[1]
+      || html.match(/<meta[^>]*content=["']([^"']+)["'][^>]*property=["']og:description["']/i)?.[1]
+      || '';
+
+    return { ogTitle: ogTitle.slice(0, 200), ogImage, ogDesc: ogDesc.slice(0, 200) };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * LLM sanity check: fetch page metadata, then verify each candidate
+ * is the correct product with correct colorway.
  */
 async function llmSanityCheck(candidates, productName) {
   if (candidates.length === 0) return [];
 
+  // ── Option A: Fetch OG meta tags from each URL (parallel) ──
+  console.log(`   🌐 Fetching page metadata for ${candidates.length} candidates...`);
+  const metaResults = await Promise.all(
+    candidates.map(c => fetchOgMeta(c.url))
+  );
+
+  // Enrich candidates with fetched metadata
+  for (let i = 0; i < candidates.length; i++) {
+    const meta = metaResults[i];
+    if (!meta) continue;
+    candidates[i].ogTitle = meta.ogTitle;
+    candidates[i].ogDesc = meta.ogDesc;
+    if (meta.ogImage && !candidates[i].image) {
+      candidates[i].image = meta.ogImage;
+    }
+  }
+
   const items = candidates.map((c, i) => ({
     id: i,
-    title: c.title?.slice(0, 100) || '',
+    title: c.ogTitle || c.title?.slice(0, 120) || '',
     url: c.url,
     marketplace: c.marketplace,
     price: c.price || '',
+    description: c.ogDesc || '',
+    hasImage: !!c.image,
+    fetched: !!metaResults[i],
   }));
 
+  // Log what we're sending to the LLM (with enriched titles)
+  console.log(`   🧠 LLM sanity check: ${items.length} candidates for "${productName}"`);
+  for (const item of items) {
+    const fetchIcon = item.fetched ? '🌐' : '⚠️';
+    console.log(`      ${fetchIcon} ${item.id}. [${item.marketplace}] ${item.title.slice(0, 70)}`);
+  }
+
+  // ── Option B: Firecrawl comparison (log only, does not affect results) ──
+  firecrawlComparisonLog(candidates.slice(0, 4), productName).catch(() => {});
+
   try {
-    console.log(`   🧠 LLM sanity check: ${items.length} candidates for "${productName}"`);
     const response = await llm.chat.completions.create({
       model: process.env.LLM_PROVIDER === 'venice' ? 'venice-uncensored' : 'gpt-4o-mini',
       messages: [
         {
           role: 'system',
-          content: `You verify shopping search results. For each candidate, determine if it is:
-1. A real online store where you can BUY the product (not a review site, blog, social media, news article, or brand homepage)
-2. The CORRECT product: "${productName}"
-3. The correct colorway/variant (not a different color of the same model)
+          content: `You verify shopping search results for: "${productName}"
 
-Return JSON only — an array of IDs that pass ALL three checks:
-{"approved": [0, 2, 5]}
+You are given each candidate's page title (from the actual webpage), URL, description, and price.
 
-Be strict:
-- Category pages listing many products → reject
-- Review/editorial sites (RunRepeat, Hypebeast, Complex, WornOnTV) → reject
-- Brand homepages or "shop all" pages → reject
-- Different colorway of same model → reject
-- Used/resale/consignment → reject
-- Actual product pages where you can add to cart → approve`
+For each candidate, check ALL of these:
+1. Is it a real product page where someone can BUY this item? (not a category page, review, blog, or brand homepage)
+2. Is it the CORRECT brand and model?
+3. Is it the correct colorway/variant? Check the page title AND description for color information.
+
+Return JSON: {"approved": [0, 2, 5], "rejected": {"1": "reason", "3": "reason"}}
+
+REJECT:
+- Category/search/brand pages
+- Review sites, blogs, editorial
+- Different brand
+- Different colorway (e.g. page says "Grey" but we want "Orange")
+- Used/resale/consignment/rental
+- Pages that couldn't be fetched (fetched: false) with vague titles
+- Duplicate domains (only approve first per domain)
+
+APPROVE only if the page title/description clearly confirms this exact product in the correct colorway.`
         },
         {
           role: 'user',
@@ -323,12 +399,51 @@ Be strict:
     const parsed = JSON.parse(content);
     const approvedIds = new Set(parsed.approved || []);
 
-    console.log(`   → LLM approved ${approvedIds.size}/${items.length} candidates`);
+    // Log approvals and rejections
+    console.log(`   → LLM approved ${approvedIds.size}/${items.length}`);
+    if (parsed.rejected) {
+      for (const [id, reason] of Object.entries(parsed.rejected)) {
+        console.log(`      ❌ ${id}. ${items[id]?.marketplace || '?'}: ${reason}`);
+      }
+    }
+    for (const id of approvedIds) {
+      console.log(`      ✅ ${id}. ${items[id]?.marketplace || '?'}: ${items[id]?.title?.slice(0, 60)}`);
+    }
 
-    return candidates.filter((_, i) => approvedIds.has(i));
+    // Dedup by domain — only keep first result per domain
+    const seenDomains = new Set();
+    return candidates.filter((c, i) => {
+      if (!approvedIds.has(i)) return false;
+      const domain = getDomain(c.url);
+      if (seenDomains.has(domain)) return false;
+      seenDomains.add(domain);
+      return true;
+    });
   } catch (err) {
     console.error(`   ⚠️ LLM sanity check failed: ${err.message} — passing all candidates through`);
     return candidates;
+  }
+}
+
+/**
+ * Option B: Firecrawl deep scrape (log only — for comparison with Option A)
+ */
+async function firecrawlComparisonLog(candidates, productName) {
+  if (!process.env.FIRECRAWL_API_KEY) return;
+  console.log(`   🔬 [Firecrawl comparison] Scraping ${candidates.length} pages for comparison...`);
+
+  for (const c of candidates) {
+    try {
+      const { firecrawlScrape } = await import('../services/firecrawl.js');
+      const result = await firecrawlScrape(c.url);
+      const content = result.body?.data?.markdown || result.body?.data?.content || '';
+      const snippet = content.slice(0, 300).replace(/\s+/g, ' ').trim();
+      const hasAddToCart = /add to (cart|bag|basket)/i.test(content);
+      const hasPrice = /[£$€]\s?\d/.test(content);
+      console.log(`   🔬 [Firecrawl] ${getDomain(c.url)}: cart=${hasAddToCart} price=${hasPrice} content=${snippet.slice(0, 100)}...`);
+    } catch (err) {
+      console.log(`   🔬 [Firecrawl] ${getDomain(c.url)}: failed — ${err.message}`);
+    }
   }
 }
 
