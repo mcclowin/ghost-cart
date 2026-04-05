@@ -155,7 +155,7 @@ function isObviouslyNotAStore(url) {
 }
 
 async function buildExactMatchesFromLens(lensResults, discovery) {
-  const productName = discovery.exactModel || discovery.exactSearchQuery || '';
+  const productName = discovery.exactSearchQuery || discovery.exactModel || '';
 
   // ── Step 3a-c: Collect all candidate URLs from Lens ──
   const allCandidates = [];
@@ -243,11 +243,13 @@ async function buildExactMatchesFromLens(lensResults, discovery) {
     // No match — leave image as null rather than showing wrong product
   }
 
-  console.log(`   ✅ LLM verified: ${verified.length} results`);
+  const withImages = verified.filter(v => v.image).length;
+  console.log(`   ✅ LLM verified: ${verified.length} results (${withImages} with images)`);
   for (const v of verified.slice(0, 6)) {
-    const imgStr = v.image ? ' 🖼️' : '';
+    const imgSrc = v.image ? `🖼️ ${v.image.slice(0, 50)}` : '❌ no image';
     const priceStr = v.price ? ` ${v.price}` : '';
-    console.log(`      [${v.marketplace}]${priceStr}${imgStr} — ${v.url.slice(0, 70)}`);
+    console.log(`      [${v.marketplace}]${priceStr} — ${v.url.slice(0, 60)}`);
+    console.log(`         ${imgSrc}`);
   }
 
   const results = verified.slice(0, 4).map((item, index) => ({
@@ -328,13 +330,29 @@ async function llmSanityCheck(candidates, productName) {
   );
 
   // Enrich candidates with fetched metadata
+  let fetchOk = 0, fetchFail = 0, imagesFound = 0;
   for (let i = 0; i < candidates.length; i++) {
     const meta = metaResults[i];
-    if (!meta) continue;
+    if (!meta) { fetchFail++; continue; }
+    fetchOk++;
     candidates[i].ogTitle = meta.ogTitle;
     candidates[i].ogDesc = meta.ogDesc;
     if (meta.ogImage && !candidates[i].image) {
       candidates[i].image = meta.ogImage;
+      imagesFound++;
+    }
+  }
+  console.log(`   🌐 OG fetch: ${fetchOk} ok, ${fetchFail} failed, ${imagesFound} images extracted`);
+  // Log details for each candidate
+  for (let i = 0; i < candidates.length; i++) {
+    const meta = metaResults[i];
+    const c = candidates[i];
+    const img = c.image ? '🖼️' : '  ';
+    const title = (c.ogTitle || c.title || '').slice(0, 60);
+    if (meta) {
+      console.log(`      ${img} ${i}. [${c.marketplace}] "${title}" og:image=${meta.ogImage ? 'yes' : 'no'}`);
+    } else {
+      console.log(`      ⚠️ ${i}. [${c.marketplace}] fetch failed — ${c.url.slice(0, 60)}`);
     }
   }
 
@@ -429,18 +447,32 @@ APPROVE only if the page title/description clearly confirms this exact product i
  * Option B: Firecrawl deep scrape (log only — for comparison with Option A)
  */
 async function firecrawlComparisonLog(candidates, productName) {
-  if (!process.env.FIRECRAWL_API_KEY) return;
-  console.log(`   🔬 [Firecrawl comparison] Scraping ${candidates.length} pages for comparison...`);
+  if (!process.env.FIRECRAWL_API_KEY) {
+    console.log(`   🔬 [Firecrawl] FIRECRAWL_API_KEY not set — skipping comparison`);
+    return;
+  }
+  console.log(`   🔬 [Firecrawl comparison] Scraping ${candidates.length} pages for "${productName}"...`);
+
+  const { firecrawlScrape } = await import('../services/firecrawl.js');
 
   for (const c of candidates) {
     try {
-      const { firecrawlScrape } = await import('../services/firecrawl.js');
       const result = await firecrawlScrape(c.url);
-      const content = result.body?.data?.markdown || result.body?.data?.content || '';
-      const snippet = content.slice(0, 300).replace(/\s+/g, ' ').trim();
-      const hasAddToCart = /add to (cart|bag|basket)/i.test(content);
+      const data = result.body?.data || result.body || {};
+      const content = data.markdown || data.content || '';
+      const metadata = data.metadata || {};
+      const snippet = content.slice(0, 400).replace(/\s+/g, ' ').trim();
+      const hasAddToCart = /add to (cart|bag|basket)\b/i.test(content);
       const hasPrice = /[£$€]\s?\d/.test(content);
-      console.log(`   🔬 [Firecrawl] ${getDomain(c.url)}: cart=${hasAddToCart} price=${hasPrice} content=${snippet.slice(0, 100)}...`);
+      const pageTitle = metadata.title || metadata.ogTitle || '';
+      const ogImage = metadata.ogImage || metadata.image || '';
+      const hasProductName = content.toLowerCase().includes(productName.toLowerCase().split(' ').slice(0, 3).join(' '));
+
+      console.log(`   🔬 [Firecrawl] ${getDomain(c.url)}:`);
+      console.log(`      title: "${pageTitle.slice(0, 80)}"`);
+      console.log(`      og:image: ${ogImage ? ogImage.slice(0, 80) : 'none'}`);
+      console.log(`      cart: ${hasAddToCart} | price: ${hasPrice} | product match: ${hasProductName}`);
+      console.log(`      content: "${snippet.slice(0, 120)}..."`);
     } catch (err) {
       console.log(`   🔬 [Firecrawl] ${getDomain(c.url)}: failed — ${err.message}`);
     }
