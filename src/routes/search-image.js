@@ -15,7 +15,7 @@ import { mkdirSync, existsSync } from 'fs';
 import { unlink } from 'fs/promises';
 import { extname } from 'path';
 import { analyzeClothingImage } from '../services/vision.js';
-import { parseQuery, rankResults, llm } from '../services/venice.js';
+import { parseQuery, rankResults, reconcileImageDiscovery, llm } from '../services/venice.js';
 import { searchGoogleShopping } from '../services/search-serp.js';
 import { resolveShoppingResults, searchTavily } from '../services/search-web.js';
 import { searchGoogleLens } from '../services/search-lens.js';

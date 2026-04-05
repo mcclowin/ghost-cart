@@ -107,19 +107,29 @@ export function parseAiModeAnswer(aiResult, lensResults, fallbackQuery) {
     };
   }
 
-  const answer = aiResult.answer;
+  // Strip markdown bold/italic for easier parsing
+  const answer = aiResult.answer.replace(/\*\*([^*]+)\*\*/g, '$1').replace(/\*([^*]+)\*/g, '$1');
 
-  // Extract brand — look for "Brand: X" or "Brand Name: X" pattern
-  const brandMatch = answer.match(/Brand(?:\s*Name)?:\s*\**([^\n*]+)/i);
-  const brand = brandMatch?.[1]?.trim() || '';
+  // Stop pattern — these indicate the next field or section
+  const STOP = `(?=\\s*(?:\\d\\)|Brand|Model|Product|Color|Colorway|Top|Where|Store|Buy|Shop|$))`;
 
-  // Extract model — look for "Model: X" or "Product Name: X"
-  const modelMatch = answer.match(/(?:Model|Product\s*Name|Model\/Product\s*Name):\s*\**([^\n*]+)/i);
+  // Extract brand
+  const brandMatch = answer.match(new RegExp(`Brand(?:\\s*Name)?[:\\s]+(.+?)${STOP}`, 'i'));
+  let brand = brandMatch?.[1]?.trim() || '';
+  // Clean up citation artifacts like "Instagram +1"
+  brand = brand.replace(/\s*(?:Instagram|Facebook|Reddit|TikTok|X|YouTube).*$/i, '').trim();
+
+  // Extract model
+  const modelMatch = answer.match(new RegExp(`(?:Model|Product\\s*Name|Model\\/Product\\s*Name)[:\\s]+(.+?)${STOP}`, 'i'));
   const model = modelMatch?.[1]?.trim() || '';
 
   // Extract colorway
-  const colorMatch = answer.match(/(?:Color|Colorway|Color\/Colorway):\s*\**([^\n*]+)/i);
+  const colorMatch = answer.match(new RegExp(`(?:Color|Colorway|Color\\/Colorway)[:\\s]+(.+?)${STOP}`, 'i'));
   const colorway = colorMatch?.[1]?.trim() || '';
+
+  // Log what we're parsing
+  console.log(`   🤖 Parsing from: "${answer.slice(0, 300)}..."`);
+  console.log(`   🤖 Regex matches: brand="${brand}" model="${model}" colorway="${colorway}"`);
 
   // Build the full product name
   const fullName = [brand, model, colorway].filter(Boolean).join(' ').trim();
