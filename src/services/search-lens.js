@@ -453,6 +453,8 @@ async function searchBrightDataLens(imageUrl, options = {}) {
       // ── Fetch AI Mode result (Google's own product ID) ──
       let aiModeResult = null;
       const tabs = data.tabs || [];
+      const tabNames = tabs.map(t => t.name).join(', ');
+      console.log(`   🤖 Lens tabs: ${tabNames || 'none'}`);
       const aiModeTab = tabs.find(t => t.name === 'AI Mode' && t.link);
       if (aiModeTab) {
         try {

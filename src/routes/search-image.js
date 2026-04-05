@@ -374,11 +374,13 @@ async function llmSanityCheck(candidates, productName) {
     console.log(`      ${fetchIcon} ${item.id}. [${item.marketplace}] ${item.title.slice(0, 70)}`);
   }
 
-  // ── Option B: Firecrawl comparison (log only, does not affect results) ──
-  firecrawlComparisonLog(candidates.slice(0, 4), productName).catch(err => {
+  // Run LLM sanity check and Firecrawl comparison in parallel
+  // Both complete before we return results
+  const firecrawlPromise = firecrawlComparisonLog(candidates.slice(0, 4), productName).catch(err => {
     console.error(`   🔬 [Firecrawl] comparison failed: ${err.message}`);
   });
 
+  let llmResult;
   try {
     const response = await llm.chat.completions.create({
       model: process.env.LLM_PROVIDER === 'venice' ? 'venice-uncensored' : 'gpt-4o-mini',
@@ -416,23 +418,24 @@ APPROVE only if the page title/description clearly confirms this exact product i
     });
 
     const content = response.choices[0].message.content;
+    console.log(`   → LLM raw response: ${content.slice(0, 500)}`);
     const parsed = JSON.parse(content);
     const approvedIds = new Set(parsed.approved || []);
 
-    // Log approvals and rejections
-    console.log(`   → LLM approved ${approvedIds.size}/${items.length}`);
-    if (parsed.rejected) {
-      for (const [id, reason] of Object.entries(parsed.rejected)) {
-        console.log(`      ❌ ${id}. ${items[id]?.marketplace || '?'}: ${reason}`);
+    // Log every candidate's fate
+    console.log(`   → LLM verdict: ${approvedIds.size} approved, ${items.length - approvedIds.size} rejected`);
+    for (const item of items) {
+      if (approvedIds.has(item.id)) {
+        console.log(`      ✅ ${item.id}. [${item.marketplace}] ${item.title.slice(0, 60)}`);
+      } else {
+        const reason = parsed.rejected?.[String(item.id)] || 'no reason given';
+        console.log(`      ❌ ${item.id}. [${item.marketplace}] ${item.title.slice(0, 50)} → ${reason}`);
       }
-    }
-    for (const id of approvedIds) {
-      console.log(`      ✅ ${id}. ${items[id]?.marketplace || '?'}: ${items[id]?.title?.slice(0, 60)}`);
     }
 
     // Dedup by domain — only keep first result per domain
     const seenDomains = new Set();
-    return candidates.filter((c, i) => {
+    llmResult = candidates.filter((c, i) => {
       if (!approvedIds.has(i)) return false;
       const domain = getDomain(c.url);
       if (seenDomains.has(domain)) return false;
@@ -441,8 +444,13 @@ APPROVE only if the page title/description clearly confirms this exact product i
     });
   } catch (err) {
     console.error(`   ⚠️ LLM sanity check failed: ${err.message} — passing all candidates through`);
-    return candidates;
+    llmResult = candidates;
   }
+
+  // Wait for Firecrawl comparison to finish logging before returning
+  await firecrawlPromise;
+
+  return llmResult;
 }
 
 /**
