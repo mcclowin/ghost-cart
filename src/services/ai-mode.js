@@ -91,8 +91,8 @@ IMPORTANT: Look carefully at ALL clues — Instagram handles (@alo = Alo Yoga), 
 }
 
 /**
- * Parse the AI Mode answer into structured discovery fields.
- * No LLM needed — just extract from the structured text.
+ * Use the AI Mode answer directly — no regex parsing.
+ * The answer_text IS the identification. The links_attached ARE the buy links.
  */
 export function parseAiModeAnswer(aiResult, lensResults, fallbackQuery) {
   if (!aiResult?.answer) {
@@ -104,59 +104,63 @@ export function parseAiModeAnswer(aiResult, lensResults, fallbackQuery) {
       alternativeSearchQuery: fallbackQuery || 'clothing',
       rationale: 'AI Mode returned no answer',
       source: 'ai_mode_empty',
+      aiModeLinks: [],
     };
   }
 
-  // Strip markdown bold/italic for easier parsing
-  const answer = aiResult.answer.replace(/\*\*([^*]+)\*\*/g, '$1').replace(/\*([^*]+)\*/g, '$1');
+  const answer = aiResult.answer;
+  const links = aiResult.links || [];
 
-  // Stop pattern — these indicate the next field or section
-  const STOP = `(?=\\s*(?:\\d\\)|Brand|Model|Product|Color|Colorway|Top|Where|Store|Buy|Shop|$))`;
+  // The first sentence usually contains the product identification
+  // e.g. "the product is the Alo Yoga tracksuit in their Candy Heart Pink colorway"
+  // Use the first ~150 chars as the display title, cleaned up
+  const firstSentence = answer.split(/[.!]\s/)[0] || answer.slice(0, 150);
 
-  // Extract brand
-  const brandMatch = answer.match(new RegExp(`Brand(?:\\s*Name)?[:\\s]+(.+?)${STOP}`, 'i'));
-  let brand = brandMatch?.[1]?.trim() || '';
-  // Clean up citation artifacts like "Instagram +1"
-  brand = brand.replace(/\s*(?:Instagram|Facebook|Reddit|TikTok|X|YouTube).*$/i, '').trim();
+  // For exactSearchQuery: extract product name from links if available
+  // Link text often has clean product names like "Accolade Crew Neck Pullover"
+  const productLinks = links.filter(l =>
+    l.url && !/google\.com\/search/.test(l.url) && l.text && l.text !== '?'
+  );
+  const linkProductNames = productLinks.map(l => l.text).filter(Boolean);
 
-  // Extract model
-  const modelMatch = answer.match(new RegExp(`(?:Model|Product\\s*Name|Model\\/Product\\s*Name)[:\\s]+(.+?)${STOP}`, 'i'));
-  const model = modelMatch?.[1]?.trim() || '';
+  // Build exactSearchQuery from link product names or from the answer
+  let exactSearchQuery = null;
+  if (linkProductNames.length > 0) {
+    // Use the first product link name — it's usually the cleanest
+    exactSearchQuery = linkProductNames[0];
+  }
 
-  // Extract colorway
-  const colorMatch = answer.match(new RegExp(`(?:Color|Colorway|Color\\/Colorway)[:\\s]+(.+?)${STOP}`, 'i'));
-  const colorway = colorMatch?.[1]?.trim() || '';
+  // If no good link names, try to extract from the answer text
+  if (!exactSearchQuery) {
+    // Look for "the product is [the] XXXXX" pattern
+    const productMatch = answer.match(/(?:the product is|this is|identified as|you photographed is)\s+(?:the\s+)?(.{10,100}?)(?:\.|,\s*(?:worn|from|in their))/i);
+    if (productMatch) {
+      exactSearchQuery = productMatch[1].trim();
+    }
+  }
 
-  // Log what we're parsing
-  console.log(`   🤖 Parsing from: "${answer.slice(0, 300)}..."`);
-  console.log(`   🤖 Regex matches: brand="${brand}" model="${model}" colorway="${colorway}"`);
+  const hasExactModel = !!exactSearchQuery;
+  const confidence = hasExactModel ? 'high' : 'low';
 
-  // Build the full product name
-  const fullName = [brand, model, colorway].filter(Boolean).join(' ').trim();
-
-  // Build exact search query (for shopping search)
-  const exactSearchQuery = fullName || null;
-
-  // Build alternative query (broader)
-  const altParts = [brand, model].filter(Boolean);
-  const alternativeSearchQuery = altParts.length > 0
-    ? altParts.join(' ')
+  // For alternatives: use a broader version or fallback
+  const alternativeSearchQuery = exactSearchQuery
+    ? exactSearchQuery.split(/\s+/).slice(0, 4).join(' ')
     : fallbackQuery || 'clothing';
 
-  const hasExactModel = !!brand && !!model;
-  const confidence = hasExactModel ? (colorway ? 'high' : 'medium') : 'low';
-
-  console.log(`   🤖 Parsed: brand="${brand}" model="${model}" colorway="${colorway}"`);
+  console.log(`   🤖 AI Mode answer: "${answer.slice(0, 200)}..."`);
+  console.log(`   🤖 Product links: ${linkProductNames.join(', ') || 'none'}`);
   console.log(`   🤖 exactSearchQuery: "${exactSearchQuery || 'none'}"`);
+  console.log(`   🤖 alternativeSearchQuery: "${alternativeSearchQuery}"`);
 
   return {
     hasExactModel,
-    exactModel: [brand, model].filter(Boolean).join(' ') || null,
+    exactModel: exactSearchQuery,
     exactSearchQuery,
     confidence,
     alternativeSearchQuery,
-    rationale: `AI Mode identified: ${fullName || 'unknown'}`,
+    rationale: firstSentence,
     source: 'ai_mode',
-    aiModeLinks: aiResult.links || [],
+    aiModeLinks: links,
+    aiModeAnswer: answer,
   };
 }
