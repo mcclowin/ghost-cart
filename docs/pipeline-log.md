@@ -105,6 +105,28 @@ Step 5: Resolve images from visual matches (URL match → domain match → fallb
 - No wrong fallback images — only use images from exact URL or domain match
 - Detailed logging of every candidate sent to LLM and every approval/rejection
 
+### Round 3: Firecrawl for image extraction (2026-04-05)
+
+**Problem:** OG fetch only gets images from ~36% of stores. Major retailers (ASOS, Sneaker District, Offspring) serve og:image via JavaScript which simple fetch can't read.
+
+**Testing (local):**
+| Store | OG fetch (simple) | Firecrawl |
+|-------|-------------------|-----------|
+| ASOS | ❌ no image | ✅ got og:image (asos-media.com CDN) |
+| OFFICE | ❌ no image | ❌ no og:image (page genuinely doesn't have one) but got title with colorway |
+| Sneaker District | ❌ no image | ✅ got og:image (cdn.etrias.nl) |
+| Flannels | ✅ | — (not needed) |
+| GOAT | ✅ | — (not needed) |
+| Zalando | ✅ | — (not needed) |
+
+**Decision:** Plug Firecrawl into the main pipeline as final image extraction step.
+- Only runs for top 4 approved results that still have no image after visual match + OG fetch
+- Runs in parallel (all missing-image pages at once)
+- Part of the main await chain — response waits for it, logs will appear
+- Removed old fire-and-forget comparison log
+
+**Image resolution chain:** Lens visual match (URL/domain) → OG fetch → Firecrawl
+
 ### Open issue: Bright Data geo-location
 Bright Data routes through random countries each request. Results vary dramatically:
 - en-IN → Myntra, Ajio (Indian stores, ₹ prices)

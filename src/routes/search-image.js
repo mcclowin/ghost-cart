@@ -227,26 +227,53 @@ async function buildExactMatchesFromLens(lensResults, discovery) {
   // ── Step 4: LLM sanity check ──
   const verified = await llmSanityCheck(deduped, productName);
 
-  // ── Resolve missing images from visual matches ──
-  // Only use an image if it's from the exact same URL or same domain
-  // Do NOT use a random fallback — wrong image is worse than no image
+  // ── Resolve images: 1) visual matches, 2) OG fetch, 3) Firecrawl ──
   const visualImages = (lensResults.visualMatches || [])
     .filter(v => v.image && v.url)
     .map(v => ({ url: v.url, image: v.image, domain: getDomain(v.url) }));
 
+  // Step 1: visual match images (URL or domain match)
   for (const item of verified) {
     if (item.image) continue;
     const exactMatch = visualImages.find(v => v.url === item.url);
     if (exactMatch) { item.image = exactMatch.image; continue; }
     const domainMatch = visualImages.find(v => v.domain === getDomain(item.url));
     if (domainMatch) { item.image = domainMatch.image; continue; }
-    // No match — leave image as null rather than showing wrong product
   }
 
-  const withImages = verified.filter(v => v.image).length;
-  console.log(`   ✅ LLM verified: ${verified.length} results (${withImages} with images)`);
-  for (const v of verified.slice(0, 6)) {
-    const imgSrc = v.image ? `🖼️ ${v.image.slice(0, 50)}` : '❌ no image';
+  // Step 2: Firecrawl for top 4 results still missing images
+  const top4 = verified.slice(0, 4);
+  const needsImage = top4.filter(item => !item.image);
+  if (needsImage.length > 0 && process.env.FIRECRAWL_API_KEY) {
+    console.log(`   🔥 Firecrawl: scraping ${needsImage.length}/${top4.length} results for images...`);
+    const { firecrawlScrape } = await import('../services/firecrawl.js');
+    await Promise.all(needsImage.map(async (item) => {
+      try {
+        const result = await firecrawlScrape(item.url);
+        const metadata = result.body?.data?.metadata || {};
+        const ogImage = metadata.ogImage || metadata['og:image'] || '';
+        const pageTitle = metadata.title || metadata.ogTitle || '';
+        if (ogImage) {
+          item.image = ogImage;
+          console.log(`      🖼️ [${item.marketplace}] Firecrawl got image: ${ogImage.slice(0, 100)}`);
+        } else {
+          console.log(`      ❌ [${item.marketplace}] Firecrawl: page has no og:image`);
+        }
+        if (pageTitle && (!item.title || item.title.length < 20)) {
+          item.title = pageTitle;
+        }
+      } catch (err) {
+        console.log(`      ⚠️ [${item.marketplace}] Firecrawl failed: ${err.message}`);
+      }
+    }));
+  } else if (needsImage.length > 0) {
+    console.log(`   ⚠️ ${needsImage.length} results missing images (no FIRECRAWL_API_KEY)`);
+  }
+
+  const withImages = top4.filter(v => v.image).length;
+  console.log(`   ✅ Final: ${top4.length} results, ${withImages} with images`);
+  for (const v of top4) {
+    const imgSrc = v.image ? `🖼️ ${v.image.slice(0, 60)}` : '❌ no image';
     const priceStr = v.price ? ` ${v.price}` : '';
     console.log(`      [${v.marketplace}]${priceStr} — ${v.url.slice(0, 60)}`);
     console.log(`         ${imgSrc}`);
@@ -374,12 +401,6 @@ async function llmSanityCheck(candidates, productName) {
     console.log(`      ${fetchIcon} ${item.id}. [${item.marketplace}] ${item.title.slice(0, 70)}`);
   }
 
-  // Run LLM sanity check and Firecrawl comparison in parallel
-  // Both complete before we return results
-  const firecrawlPromise = firecrawlComparisonLog(candidates.slice(0, 4), productName).catch(err => {
-    console.error(`   🔬 [Firecrawl] comparison failed: ${err.message}`);
-  });
-
   let llmResult;
   try {
     const response = await llm.chat.completions.create({
@@ -447,53 +468,7 @@ APPROVE only if the page title/description clearly confirms this exact product i
     llmResult = candidates;
   }
 
-  // Wait for Firecrawl comparison to finish logging before returning
-  await firecrawlPromise;
-
   return llmResult;
-}
-
-/**
- * Option B: Firecrawl deep scrape (log only — for comparison with Option A)
- */
-async function firecrawlComparisonLog(candidates, productName) {
-  if (!process.env.FIRECRAWL_API_KEY) {
-    console.log(`   🔬 [Firecrawl] FIRECRAWL_API_KEY not set — skipping comparison`);
-    return;
-  }
-  console.log(`   🔬 [Firecrawl comparison] Starting scrape of ${candidates.length} pages for "${productName}"...`);
-
-  let firecrawlScrape;
-  try {
-    const mod = await import('../services/firecrawl.js');
-    firecrawlScrape = mod.firecrawlScrape;
-  } catch (err) {
-    console.error(`   🔬 [Firecrawl] import failed: ${err.message}`);
-    return;
-  }
-
-  for (const c of candidates) {
-    try {
-      const result = await firecrawlScrape(c.url);
-      const data = result.body?.data || result.body || {};
-      const content = data.markdown || data.content || '';
-      const metadata = data.metadata || {};
-      const snippet = content.slice(0, 400).replace(/\s+/g, ' ').trim();
-      const hasAddToCart = /add to (cart|bag|basket)\b/i.test(content);
-      const hasPrice = /[£$€]\s?\d/.test(content);
-      const pageTitle = metadata.title || metadata.ogTitle || '';
-      const ogImage = metadata.ogImage || metadata.image || '';
-      const hasProductName = content.toLowerCase().includes(productName.toLowerCase().split(' ').slice(0, 3).join(' '));
-
-      console.log(`   🔬 [Firecrawl] ${getDomain(c.url)}:`);
-      console.log(`      title: "${pageTitle.slice(0, 80)}"`);
-      console.log(`      og:image: ${ogImage ? ogImage.slice(0, 80) : 'none'}`);
-      console.log(`      cart: ${hasAddToCart} | price: ${hasPrice} | product match: ${hasProductName}`);
-      console.log(`      content: "${snippet.slice(0, 120)}..."`);
-    } catch (err) {
-      console.log(`   🔬 [Firecrawl] ${getDomain(c.url)}: failed — ${err.message}`);
-    }
-  }
 }
 
 // ── Alternatives: Google Shopping + Tavily ──
