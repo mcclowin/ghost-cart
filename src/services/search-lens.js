@@ -450,6 +450,46 @@ async function searchBrightDataLens(imageUrl, options = {}) {
         .filter(Boolean)
         .slice(0, 10);
 
+      // ── Fetch AI Mode result (Google's own product ID) ──
+      let aiModeResult = null;
+      const tabs = data.tabs || [];
+      const aiModeTab = tabs.find(t => t.name === 'AI Mode' && t.link);
+      if (aiModeTab) {
+        try {
+          console.log(`   🤖 Fetching Google AI Mode identification...`);
+          const aiResponse = await fetch('https://api.brightdata.com/request', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${apiKey}`,
+            },
+            body: JSON.stringify({
+              zone,
+              url: aiModeTab.link,
+              format: 'raw',
+              country: brightdataCountry,
+            }),
+          });
+          if (aiResponse.ok) {
+            const aiData = await aiResponse.json();
+            // AI Mode returns various structures — extract what we can
+            const aiKeys = Object.keys(aiData);
+            console.log(`   🤖 AI Mode response keys: ${aiKeys.join(', ')}`);
+            // Log the full response for analysis (truncated)
+            for (const key of aiKeys) {
+              const val = aiData[key];
+              const preview = typeof val === 'object' ? JSON.stringify(val).slice(0, 400) : String(val).slice(0, 400);
+              console.log(`   🤖 AI.${key}: ${preview}`);
+            }
+            aiModeResult = aiData;
+          } else {
+            console.log(`   🤖 AI Mode fetch failed: ${aiResponse.status}`);
+          }
+        } catch (aiErr) {
+          console.log(`   🤖 AI Mode fetch error: ${aiErr.message}`);
+        }
+      }
+
       // ── Detailed logging ──
       console.log(`   → Lens: ${exactMatches.length} exact, ${visualMatches.length} visual, ${offers.length} offers`);
 
@@ -475,7 +515,7 @@ async function searchBrightDataLens(imageUrl, options = {}) {
         console.log(`      ${hasImg} [${v.marketplace}] ${v.title.slice(0, 50)} — ${v.url.slice(0, 70)}`);
       }
 
-      return { exactMatches, visualMatches, offers, relatedSearches };
+      return { exactMatches, visualMatches, offers, relatedSearches, aiModeResult };
     } catch (error) {
       lastError = error;
       const retryable = shouldRetryBrightDataError(error.status || 0, error.message || '');

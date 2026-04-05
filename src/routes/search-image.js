@@ -375,7 +375,9 @@ async function llmSanityCheck(candidates, productName) {
   }
 
   // ── Option B: Firecrawl comparison (log only, does not affect results) ──
-  firecrawlComparisonLog(candidates.slice(0, 4), productName).catch(() => {});
+  firecrawlComparisonLog(candidates.slice(0, 4), productName).catch(err => {
+    console.error(`   🔬 [Firecrawl] comparison failed: ${err.message}`);
+  });
 
   try {
     const response = await llm.chat.completions.create({
@@ -451,9 +453,16 @@ async function firecrawlComparisonLog(candidates, productName) {
     console.log(`   🔬 [Firecrawl] FIRECRAWL_API_KEY not set — skipping comparison`);
     return;
   }
-  console.log(`   🔬 [Firecrawl comparison] Scraping ${candidates.length} pages for "${productName}"...`);
+  console.log(`   🔬 [Firecrawl comparison] Starting scrape of ${candidates.length} pages for "${productName}"...`);
 
-  const { firecrawlScrape } = await import('../services/firecrawl.js');
+  let firecrawlScrape;
+  try {
+    const mod = await import('../services/firecrawl.js');
+    firecrawlScrape = mod.firecrawlScrape;
+  } catch (err) {
+    console.error(`   🔬 [Firecrawl] import failed: ${err.message}`);
+    return;
+  }
 
   for (const c of candidates) {
     try {
@@ -587,7 +596,8 @@ router.post('/search-image', upload.single('image'), async (req, res) => {
     // and understand brand vs reseller names. Heuristic is fallback only.
     const discovery = await reconcileImageDiscovery({
       caption: caption || '',
-      vision,
+      // Vision excluded from reconciliation — it contaminates with wrong brands
+      // (e.g. says "NB 1140" when Lens correctly says "NB 740")
       lensResults,
     }).catch(err => {
       console.error('Discovery reconciliation failed, falling back to heuristic:', err.message);
@@ -613,11 +623,13 @@ router.post('/search-image', upload.single('image'), async (req, res) => {
       discovery.alternativeSearchQuery = searchQuery;
     }
 
-    if (discovery.hasExactModel) {
-      console.log(`   🎯 Exact model: ${discovery.exactModel} (${discovery.confidence}) → "${discovery.exactSearchQuery}"`);
-    } else {
-      console.log(`   🎯 Exact model: none (${discovery.confidence})`);
-    }
+    // ── Compare all three ID sources ──
+    console.log(`   ┌─ ID COMPARISON ─────────────────────────────────────`);
+    console.log(`   │ 1. Lens related_search: ${(lensResults.relatedSearches || []).join(', ') || 'none'}`);
+    console.log(`   │ 2. Google AI Mode:      ${lensResults.aiModeResult ? 'fetched (see 🤖 logs above)' : 'not available'}`);
+    console.log(`   │ 3. Our LLM reconciled:  model="${discovery.exactModel || 'none'}" query="${discovery.exactSearchQuery || 'none'}"`);
+    console.log(`   │    confidence: ${discovery.confidence || '?'} | rationale: ${discovery.rationale || '?'}`);
+    console.log(`   └──────────────────────────────────────────────────────`);
     console.log(`   🧭 Alternatives query → "${discovery.alternativeSearchQuery}"`);
 
     // ── Step 4a: Exact matches from Lens data (deterministic) ──
@@ -771,7 +783,7 @@ function formatDmReply(vision, exactRanked, alternativeRanked, discovery, pageUr
     msg += `🎯 Exact: ${topExact.title}\n`;
     if (topExact.price) msg += `💰 ${topExact.price} — ${topExact.marketplace || ''}\n`;
   } else if (discovery?.hasExactModel) {
-    msg += `🎯 Exact model: ${discovery.exactModel}\n`;
+    msg += `🎯 Exact model: ${discovery.exactSearchQuery || discovery.exactModel}\n`;
   }
 
   const topAlt = alternativeResults[0];

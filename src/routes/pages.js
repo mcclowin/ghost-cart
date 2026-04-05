@@ -48,7 +48,8 @@ function renderResultsPage(data) {
   const discovery = data.discovery || {};
   const totalResults = exactResults.length + alternativeResults.length;
 
-  const identifiedItem = discovery.exactModel
+  const identifiedItem = discovery.exactSearchQuery
+    || discovery.exactModel
     || [primary.color, primary.brand, primary.item_type].filter(Boolean).join(' ')
     || 'Clothing Item';
 
