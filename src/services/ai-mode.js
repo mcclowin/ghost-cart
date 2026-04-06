@@ -118,6 +118,7 @@ export async function parseAiModeAnswer(aiResult, lensResults, fallbackQuery, ll
   // Use Venice LLM to extract clean product name from AI Mode's answer
   let exactSearchQuery = null;
   let alternativeSearchQuery = fallbackQuery || 'clothing';
+  let cheaperAltQuery = null;
 
   try {
     const model = process.env.LLM_PROVIDER === 'venice' ? 'venice-uncensored' : 'gpt-4o-mini';
@@ -131,11 +132,13 @@ export async function parseAiModeAnswer(aiResult, lensResults, fallbackQuery, ll
 Return JSON only:
 {
   "exactProduct": "Brand Model Colorway",
-  "alternativeSearch": "Brand Model"
+  "alternativeSearch": "Brand Model",
+  "cheaperAlternativeSearch": "generic description without brand"
 }
 Rules:
 - exactProduct: include brand + model name + colorway. E.g. "Alo Yoga Sweet Escape Zip Up Hoodie Candy Heart Pink"
 - alternativeSearch: just brand + general product type. E.g. "Alo Yoga zip up hoodie"
+- cheaperAlternativeSearch: describe the product WITHOUT the brand name, focusing on what it looks like so someone can find cheaper alternatives from other brands. E.g. "pink cropped zip hoodie women athletic" or "grey suede loafers with charm detail women" or "brown beige retro chunky sneakers"
 - If multiple items (e.g. a set), use the main/top item
 - No explanations, just the JSON`,
         },
@@ -147,8 +150,10 @@ Rules:
     const parsed = JSON.parse(resp.choices[0].message.content);
     exactSearchQuery = parsed.exactProduct || null;
     alternativeSearchQuery = parsed.alternativeSearch || alternativeSearchQuery;
+    cheaperAltQuery = parsed.cheaperAlternativeSearch || null;
     console.log(`   🧠 Extracted: "${exactSearchQuery}"`);
     console.log(`   🧠 Alternative: "${alternativeSearchQuery}"`);
+    console.log(`   🧠 Cheaper alt: "${cheaperAltQuery}"`);
   } catch (err) {
     console.log(`   ⚠️ LLM extraction failed: ${err.message}`);
     // Fallback: use first sentence
@@ -164,6 +169,7 @@ Rules:
     exactSearchQuery,
     confidence,
     alternativeSearchQuery,
+    cheaperAlternativeSearch: cheaperAltQuery || alternativeSearchQuery,
     rationale: firstSentence,
     source: 'ai_mode',
     aiModeLinks: links,

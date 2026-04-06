@@ -525,17 +525,42 @@ async function runShoppingBranch(label, searchQuery, minimumResults = MIN_IMAGE_
 
   // Deduplicate
   const seen = new Set();
-  const candidates = shoppingProducts.filter(item => {
+  let candidates = shoppingProducts.filter(item => {
     if (!item?.url || seen.has(item.url)) return false;
     seen.add(item.url);
     return true;
   });
 
+  // Filter out original brand for cheaper alternatives
+  if (options.excludeBrand) {
+    const brandLower = options.excludeBrand.toLowerCase();
+    const before = candidates.length;
+    candidates = candidates.filter(item => {
+      const title = (item.title || '').toLowerCase();
+      const marketplace = (item.marketplace || '').toLowerCase();
+      return !title.includes(brandLower) && !marketplace.includes(brandLower);
+    });
+    if (before !== candidates.length) {
+      console.log(`   🏷️ Excluded ${before - candidates.length} results from brand "${options.excludeBrand}"`);
+    }
+  }
+
   const ranked = candidates.length > 0
     ? await rankResults(searchQuery, candidates, parsed)
     : { results: [], bestPick: 'No results found', filtered: [] };
 
-  const rankedResults = [...(ranked.results || [])];
+  let rankedResults = [...(ranked.results || [])];
+
+  // Sort by price ascending for cheaper alternatives
+  if (options.sortByPrice && rankedResults.length > 0) {
+    rankedResults.sort((a, b) => {
+      const priceA = parseFloat(String(a.price || '').replace(/[^0-9.]/g, '')) || 999999;
+      const priceB = parseFloat(String(b.price || '').replace(/[^0-9.]/g, '')) || 999999;
+      return priceA - priceB;
+    });
+    console.log(`   💰 Sorted ${rankedResults.length} alternatives by price (cheapest first)`);
+  }
+
   if (!options.disableBackfill && rankedResults.length < minimumResults) {
     const existingUrls = new Set(rankedResults.map(item => item.url).filter(Boolean));
     const backfill = buildBackfillCandidates(shoppingProducts, parsed, existingUrls, minimumResults);
@@ -630,12 +655,14 @@ router.post('/search-image', upload.single('image'), async (req, res) => {
       exactBranch = await buildExactMatchesFromLens(lensResults, discovery);
     }
 
-    // ── Step 4b: Alternatives from Google Shopping + Tavily ──
-    console.log('🏪 Step 4b: Alternatives search...');
+    // ── Step 4b: Alternatives — cheaper similar items from other brands ──
+    const altQuery = discovery.cheaperAlternativeSearch || discovery.alternativeSearchQuery || searchQuery;
+    console.log(`🏪 Step 4b: Cheaper alternatives search: "${altQuery}"`);
     const alternativesBranch = await runShoppingBranch(
       'Alternatives search',
-      discovery.alternativeSearchQuery || searchQuery,
+      altQuery,
       3,
+      { sortByPrice: true, excludeBrand: discovery.exactModel?.split(' ')[0] || '' },
     );
 
     // No Lens fallback — trust the LLM-ranked shopping results
