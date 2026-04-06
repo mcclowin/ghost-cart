@@ -56,10 +56,10 @@ ${description}
 Based on this, identify the EXACT product:
 1) Brand name
 2) Model/product name
-3) Color/colorway (use the official colorway name from the brand, not generic colors)
-4) Top 3-5 stores where I can buy it with direct links
+3) Color/colorway — CHECK the actual product page URLs listed above to verify the correct colorway. The Lens titles may be cached or wrong. The actual product pages have the real colorway name. Use the official colorway name from the brand, not generic colors like "grey" or "brown".
+4) Top 3-5 stores where I can buy this exact product in this exact colorway, with direct links
 
-IMPORTANT: Look carefully at ALL clues — Instagram handles (@alo = Alo Yoga), subreddit names (r/aloyoga), hashtags, and store listing titles often reveal the brand and colorway even when the main titles don't.`;
+IMPORTANT: Look carefully at ALL clues — Instagram handles (@alo = Alo Yoga), subreddit names (r/aloyoga), hashtags, URL slugs, and store listing titles often reveal the brand and colorway even when the main titles don't. Visit the product URLs to confirm the colorway before answering.`;
 
   console.log(`   🤖 AI Mode: querying Google AI with ${description.length} chars of Lens data...`);
 

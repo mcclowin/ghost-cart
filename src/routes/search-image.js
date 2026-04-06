@@ -414,7 +414,7 @@ async function llmSanityCheck(candidates, productName) {
     price: c.price || '',
     description: c.ogDesc || '',
     hasImage: !!c.image,
-    fetched: !!metaResults[i],
+    fetched: !!metaResults[i] || !!c.ogTitle,  // true if OG fetch OR Firecrawl enriched it
   }));
 
   // Log what we're sending to the LLM (with enriched titles)
