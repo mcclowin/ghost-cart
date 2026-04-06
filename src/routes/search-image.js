@@ -644,7 +644,8 @@ router.post('/search-image', upload.single('image'), async (req, res) => {
     console.log(`   │ Lens related_search: ${(lensResults.relatedSearches || []).join(', ') || 'none'}`);
     console.log(`   │ AI Mode (PRIMARY):   "${discovery.exactSearchQuery || 'none'}" [${discovery.confidence}]`);
     console.log(`   │ Venice LLM (compare): "${llmDiscovery.exactSearchQuery || 'none'}" [${llmDiscovery.confidence || '?'}]`);
-    console.log(`   │ AI Mode rationale: ${discovery.rationale}`);
+    console.log(`   │ AI Mode rationale: ${(discovery.rationale || '').slice(0, 150)}`);
+    console.log(`   │ Cheaper alt query:   "${discovery.cheaperAlternativeSearch || 'none'}"`);
     console.log(`   └──────────────────────────────────────────────────────`);
     console.log(`   🧭 Alternatives query → "${discovery.alternativeSearchQuery}"`);
 
