@@ -7,7 +7,6 @@ import {
 } from '../services/payments-store.js';
 import { startCheckoutAutomation } from '../services/purchase.js';
 import { writeReceiptOnchain } from '../services/receipts-chain.js';
-import { constructStripeEvent, hasStripeWebhookSecret } from '../services/stripe.js';
 import { verifyLocusWebhookSignature } from '../services/locus.js';
 
 const router = Router();
@@ -66,65 +65,6 @@ async function maybeWriteReceiptOnchain(payment) {
     });
   }
 }
-
-/**
- * POST /webhook/stripe
- * Handle Stripe payment events
- */
-router.post('/stripe', express.raw({ type: 'application/json' }), async (req, res) => {
-  try {
-    if (!hasStripeWebhookSecret()) {
-      return res.status(400).json({
-        error: 'missing_stripe_webhook_secret',
-        message: 'STRIPE_WEBHOOK_SECRET is not configured',
-      });
-    }
-
-    const signature = req.headers['stripe-signature'];
-    const event = constructStripeEvent(req.body, signature);
-
-    if (event.type === 'checkout.session.completed' || event.type === 'checkout.session.async_payment_succeeded') {
-      const session = event.data.object;
-      const paymentId = session.metadata?.paymentId || null;
-      const payment = paymentId ? updatePaymentRecord(paymentId, {
-        externalId: session.id,
-        status: 'PAID',
-        providerStatus: session.status || 'complete',
-        paidAt: session.created ? new Date(session.created * 1000).toISOString() : new Date().toISOString(),
-      }) : findPaymentByExternal('stripe', session.id);
-
-      if (payment) {
-        createOrUpdateReceipt(payment.id, {
-          provider: 'stripe',
-          externalId: session.id,
-          paidAt: payment.paidAt,
-          raw: session,
-        });
-        await maybeWriteReceiptOnchain(payment);
-        await maybeStartBackgroundPurchase(payment);
-      }
-    }
-
-    if (event.type === 'checkout.session.expired') {
-      const session = event.data.object;
-      const payment = findPaymentByExternal('stripe', session.id);
-      if (payment) {
-        updatePaymentRecord(payment.id, {
-          providerStatus: 'expired',
-          status: 'EXPIRED',
-        });
-      }
-    }
-
-    return res.json({ received: true });
-  } catch (error) {
-    console.error('Stripe webhook error:', error);
-    return res.status(400).json({
-      error: 'stripe_webhook_invalid',
-      message: error.message,
-    });
-  }
-});
 
 router.post('/locus', express.raw({ type: 'application/json' }), async (req, res) => {
   try {

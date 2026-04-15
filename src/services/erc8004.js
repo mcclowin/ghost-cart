@@ -43,7 +43,7 @@ export function buildAgentCard(req) {
   const card = {
     type: 'https://eips.ethereum.org/EIPS/eip-8004#registration-v1',
     name: process.env.AGENT_NAME?.trim() || 'GhostCart',
-    description: process.env.AGENT_DESCRIPTION?.trim() || 'GhostCart is a privacy-first AI purchasing agent that searches across marketplaces and buys on behalf of users. Built by Mohammed and McClowin.',
+    description: process.env.AGENT_DESCRIPTION?.trim() || 'GhostCart is an agentic commerce API that identifies products from images and finds where to buy them. Supports x402/USDC payments for agent-to-agent commerce.',
     image: imageUrl,
     services: [
       ...(skillUrl ? [{ name: 'A2A', endpoint: skillUrl, version: '1.0.0' }] : []),
@@ -52,7 +52,7 @@ export function buildAgentCard(req) {
     x402Support: true,
     active: true,
     supportedTrust: ['reputation'],
-    capabilities: ['search', 'compare', 'purchase'],
+    capabilities: ['identify', 'search', 'compare', 'purchase'],
     pricing: {
       search: '0.50 USDC',
       purchaseFee: '10-15%',

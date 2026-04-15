@@ -2,7 +2,7 @@
   "name": "ghost-cart",
   "version": "1.0.0",
   "type": "module",
-  "description": "Privacy-first AI purchasing agent. Shop the internet invisibly.",
+  "description": "Agentic commerce API. Identify any product from a photo and find where to buy it.",
   "main": "src/index.js",
   "scripts": {
     "dev": "node --watch src/index.js",
@@ -16,11 +16,11 @@
   },
   "keywords": [
     "ai-agent",
-    "shopping",
-    "privacy",
+    "commerce",
+    "product-identification",
     "erc-8004",
-    "venice-ai",
-    "x402"
+    "x402",
+    "agentic"
   ],
   "author": "Brain&Bots (mcclowin)",
   "license": "MIT",
@@ -34,8 +34,10 @@
     "multer": "^2.1.1",
     "openai": "^4.86.2",
     "pg": "^8.20.0",
-    "stripe": "^20.4.1",
     "viem": "^2.47.6"
   },
-  "packageManager": "pnpm@10.31.0+sha512.e3927388bfaa8078ceb79b748ffc1e8274e84d75163e67bc22e06c0d3aed43dd153151cbf11d7f8301ff4acb98c68bdc5cadf6989532801ffafe3b3e4a63c268"
+  "packageManager": "pnpm@10.31.0+sha512.e3927388bfaa8078ceb79b748ffc1e8274e84d75163e67bc22e06c0d3aed43dd153151cbf11d7f8301ff4acb98c68bdc5cadf6989532801ffafe3b3e4a63c268",
+  "devDependencies": {
+    "puppeteer-core": "^24.40.0"
+  }
 }

@@ -9,11 +9,6 @@ import {
 import { getCheckoutSnapshot, startCheckoutAutomation } from '../services/purchase.js';
 import { writeReceiptOnchain } from '../services/receipts-chain.js';
 import {
-  createStripeCheckoutSession,
-  hasStripeKey,
-  retrieveStripeCheckoutSession,
-} from '../services/stripe.js';
-import {
   createLocusCheckoutSession,
   getLocusCheckoutSession,
   hasLocusKey,
@@ -41,12 +36,6 @@ function normalizeAmountString(amount) {
 function buildUrl(req, path) {
   const base = getPublicBaseUrl(req);
   return base ? `${base}${path}` : path;
-}
-
-function mapStripeStatus(session) {
-  if (session.payment_status === 'paid') return 'PAID';
-  if (session.status === 'expired') return 'EXPIRED';
-  return 'PENDING';
 }
 
 async function maybeWriteReceiptOnchain(payment, receipt) {
@@ -114,10 +103,10 @@ router.post('/payments/checkout', async (req, res) => {
     } = req.body || {};
 
     const normalizedAmount = normalizeAmountString(amount);
-    if (!provider || !['stripe', 'locus', 'demo'].includes(provider)) {
+    if (!provider || !['locus', 'demo'].includes(provider)) {
       return res.status(400).json({
         error: 'invalid_provider',
-        message: 'provider must be "stripe", "locus", or "demo"',
+        message: 'provider must be "locus" or "demo"',
       });
     }
 
@@ -166,51 +155,9 @@ router.post('/payments/checkout', async (req, res) => {
     }
 
     if (provider === 'stripe') {
-      if (!hasStripeKey()) {
-        return res.status(400).json({
-          error: 'missing_stripe_secret_key',
-          message: 'STRIPE_SECRET_KEY is required for Stripe Checkout',
-        });
-      }
-
-      const payment = createPaymentRecord({
-        provider: 'stripe',
-        amount: normalizedAmount,
-        currency: (currency || process.env.STRIPE_CHECKOUT_CURRENCY || 'gbp').toLowerCase(),
-        description: description || 'GhostCart checkout',
-        metadata,
-      });
-
-      const successUrl = buildUrl(req, `/payment-success.html?provider=stripe&paymentId=${payment.id}`);
-      const cancelUrl = buildUrl(req, `/payment-cancelled.html?provider=stripe&paymentId=${payment.id}`);
-
-      const session = await createStripeCheckoutSession({
-        amount: normalizedAmount,
-        currency: payment.currency,
-        description: payment.description,
-        successUrl,
-        cancelUrl,
-        metadata: {
-          paymentId: payment.id,
-          ...Object.fromEntries(
-            Object.entries(metadata || {}).map(([key, value]) => [key, String(value)])
-          ),
-        },
-      });
-
-      const next = updatePaymentRecord(payment.id, {
-        externalId: session.id,
-        checkoutUrl: session.url,
-        providerStatus: session.status || 'open',
-      });
-
-      return res.status(201).json({
-        paymentId: next.id,
-        provider: 'stripe',
-        status: next.status,
-        providerStatus: next.providerStatus,
-        checkoutUrl: next.checkoutUrl,
-        sessionId: session.id,
+      return res.status(400).json({
+        error: 'stripe_removed',
+        message: 'Stripe payments have been removed. Use "locus" for x402/USDC payments or "demo" for testing.',
       });
     }
 
@@ -288,25 +235,6 @@ router.get('/payments/:paymentId', async (req, res) => {
     }
 
     let next = payment;
-    if (payment.provider === 'stripe' && payment.externalId && hasStripeKey()) {
-      const session = await retrieveStripeCheckoutSession(payment.externalId);
-      const mappedStatus = mapStripeStatus(session);
-      next = updatePaymentRecord(payment.id, {
-        providerStatus: session.status || payment.providerStatus,
-        status: mappedStatus,
-        paidAt: mappedStatus === 'PAID' ? (session.created ? new Date(session.created * 1000).toISOString() : payment.paidAt) : payment.paidAt,
-      });
-
-      if (mappedStatus === 'PAID') {
-        const receipt = createOrUpdateReceipt(payment.id, {
-          provider: 'stripe',
-          externalId: session.id,
-          paidAt: next.paidAt,
-          raw: session,
-        });
-        await maybeWriteReceiptOnchain(next, receipt);
-      }
-    }
 
     if (payment.provider === 'locus' && payment.externalId && hasLocusKey()) {
       const locusResponse = await getLocusCheckoutSession(payment.externalId);

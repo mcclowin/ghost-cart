@@ -1,8 +1,8 @@
 # 🛒👻 GhostCart
 
-**Shop the internet. Privately. GhostCart searches, collects payment, and prepares checkout while keeping your intent out of the usual shopping loop.**
+**Agentic commerce API. Identify any product from a photo and find where to buy it.**
 
-GhostCart is a privacy-first AI purchasing agent that searches across multiple marketplaces, compares products, collects payment through Stripe or USDC, and prepares merchant checkout in the background. It is powered by Venice AI (zero data retention), exposes agent identity on ERC-8004 (Base), and is designed to support a future credit layer through Bond.Credit. The remaining step for full autonomous purchase execution is GhostCart's own programmatic Visa payment rail, with Visa CLI intended to handle the final checkout payment step and 3DS.
+GhostCart is an AI-powered commerce API for agents. It identifies products from images using Google Lens + AI Mode, finds where to buy them across stores with real prices, and supports agent-to-agent payments via x402/USDC. It exposes agent identity on ERC-8004 (Base) and issues on-chain receipts for purchases.
 
 ## Quick Start
 
@@ -12,71 +12,86 @@ cp .env.example .env  # Add your API keys
 pnpm run dev
 ```
 
+## API Endpoints
+
+### Identify a product from an image
+```bash
+POST /api/search-image
+Content-Type: multipart/form-data
+
+# Body: image file + optional metadata
+```
+Returns: product identification (brand, model, colorway), exact match store links, alternative options, and a results page URL.
+
+### Search by text query
+```bash
+POST /api/search
+Content-Type: application/json
+
+{"query": "Nike Air Force 1 Triple Black", "maxResults": 10}
+```
+Returns: ranked product listings with prices, store URLs, and images.
+
+### Pay via x402 (agent-to-agent)
+```bash
+POST /api/payments/checkout
+Content-Type: application/json
+
+{
+  "provider": "locus",
+  "amount": "9.99",
+  "description": "Purchase via GhostCart",
+  "metadata": { "purchaseIntent": { "url": "...", "title": "...", "price": "..." } }
+}
+```
+Supports Locus USDC payments with on-chain receipts.
+
 ## How It Works
 
-1. **Tell it what you need** — natural language, any product
-2. **Agent searches privately** — Venice AI processes your query with zero data retention
-3. **Compare across stores** — eBay, Amazon, AliExpress, specialist stores
-4. **Buy your way** — direct link (free), or pay GhostCart to prepare the purchase flow
-5. **Stay invisible** — stores see the agent, not you
+1. **Send an image** — photo of any product (clothing, shoes, accessories, furniture, anything)
+2. **AI identifies it** — Google Lens + AI Mode + LLM determines exact brand, model, and colorway
+3. **Find where to buy** — real store links with prices from across the web
+4. **Cheaper alternatives** — similar items from other brands, sorted by price
+5. **Agent payments** — x402/USDC for autonomous agent purchasing
+
+## Identification Pipeline
+
+```
+Image → Google Lens (visual search)
+            ↓
+      Google AI Mode (product identification)
+            ↓
+      Venice LLM (extract exact product name + colorway)
+            ↓
+      Lens offers + organic + visual URLs (store links)
+            ↓
+      Firecrawl (enrich with real page data + images)
+            ↓
+      LLM sanity check (verify correct product + colorway)
+            ↓
+      Results page + API response
+```
 
 ## Built With
 
-- [Venice AI](https://venice.ai) — Private, uncensored LLM
+- [Google Lens](https://lens.google.com) via [Bright Data](https://brightdata.com) — Visual product identification
+- [Google AI Mode](https://google.com/aimode) via Bright Data Scrapers — Product knowledge graph
+- [Venice AI](https://venice.ai) — LLM for product name extraction and ranking
 - [Locus](https://paywithlocus.com) — Agent payments + x402
 - [ERC-8004](https://eips.ethereum.org/EIPS/eip-8004) — Trustless agent identity on Base
-- [Bond.Credit](https://bond.credit) — On-chain agent credit
-- [Reclaim Protocol](https://reclaimprotocol.org) — ZK-TLS proofs
-- [Stripe](https://stripe.com) — Card payments
+- [Firecrawl](https://firecrawl.dev) — Page scraping for images and verification
+- [Tavily](https://tavily.com) — Web search for alternatives
 
-## Testing
+## Agent Discovery
 
-### For humans (Stripe test mode)
-Stripe is in test mode. Use test card `4242 4242 4242 4242` with any future expiry and any CVC to complete a payment.
-
-### For agents (demo provider)
-Agents can use the `demo` payment provider for instant, zero-cost end-to-end testing:
-
-```bash
-curl -X POST https://ghostcart.app/api/payments/checkout \
-  -H "Content-Type: application/json" \
-  -d '{
-    "provider": "demo",
-    "amount": "9.99",
-    "description": "GhostCart demo purchase",
-    "metadata": {
-      "purchaseIntent": {
-        "url": "https://www.amazon.co.uk/dp/B0CRG38CXK",
-        "title": "USB-C Cable",
-        "price": "£9.99",
-        "marketplace": "Amazon"
-      }
-    }
-  }'
-```
-
-The demo provider auto-confirms instantly — no real funds, no checkout UI. The full flow runs: payment → receipt → background purchase automation.
-
-### For agents (Locus USDC)
-Agents with a Locus wallet and USDC balance can pay via `"provider": "locus"` for real on-chain payments.
-
-## Hackathon
-
-Built for [The Synthesis](https://synthesis.md/hack/) — March 2026.
+- Agent Card: `https://ghostcart.app/.well-known/agent-card.json`
+- Skill File: `https://ghostcart.app/skill.md`
 
 ## Docs
 
-- [Docs Index](docs/README.md)
 - [Architecture](docs/architecture.md)
+- [Pipeline Development Log](docs/pipeline-log.md)
 - [Deployment](docs/deployment.md)
-- [User Guide](docs/user-guide.md)
-- [Plan](docs/plan.md)
-
-Live URLs:
-
-- `https://ghostcart.app/`
-- `https://ghostcart.app/skill.md`
-- `https://ghostcart.app/.well-known/agent-card.json`
 
 ## License
 
