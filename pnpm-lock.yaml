@@ -35,9 +35,6 @@ importers:
       pg:
         specifier: ^8.20.0
         version: 8.20.0
-      stripe:
-        specifier: ^20.4.1
-        version: 20.4.1(@types/node@18.19.130)
       viem:
         specifier: ^2.47.6
         version: 2.47.6(zod@3.25.76)
@@ -809,15 +806,6 @@ packages:
   strip-ansi@6.0.1:
     resolution: {integrity: sha512-Y38VPSHcqkFrCpFnQ9vuSXmquuv5oXOKpGeT6aGrr3o3Gc9AlVa6JBfUSOCnbxGGZF+/0ooI7KrPuUSztUdU5A==}
     engines: {node: '>=8'}
-
-  stripe@20.4.1:
-    resolution: {integrity: sha512-axCguHItc8Sxt0HC6aSkdVRPffjYPV7EQqZRb2GkIa8FzWDycE7nHJM19C6xAIynH1Qp1/BHiopSi96jGBxT0w==}
-    engines: {node: '>=16'}
-    peerDependencies:
-      '@types/node': '>=16'
-    peerDependenciesMeta:
-      '@types/node':
-        optional: true
 
   tar-fs@3.1.2:
     resolution: {integrity: sha512-QGxxTxxyleAdyM3kpFs14ymbYmNFrfY+pHj7Z8FgtbZ7w2//VAgLMac7sT6nRpIHjppXO2AwwEOg0bPFVRcmXw==}
@@ -1756,10 +1744,6 @@ snapshots:
   strip-ansi@6.0.1:
     dependencies:
       ansi-regex: 5.0.1
-
-  stripe@20.4.1(@types/node@18.19.130):
-    optionalDependencies:
-      '@types/node': 18.19.130
 
   tar-fs@3.1.2:
     dependencies:
