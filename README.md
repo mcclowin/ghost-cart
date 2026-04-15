@@ -14,16 +14,23 @@ pnpm run dev
 
 ## API Endpoints
 
-### Identify a product from an image
+### Search by image
 ```bash
 POST /api/search-image
 Content-Type: multipart/form-data
 
 # Body: image file + optional metadata
 ```
-Returns: product identification (brand, model, colorway), exact match store links, alternative options, and a results page URL.
+Send a photo of any product — clothing, shoes, accessories, furniture, anything. Returns the exact product identification (brand, model, colorway), store links with prices, cheaper alternatives, and a results page URL.
 
-### Search by text query
+### Search by text (product name or description)
+```bash
+POST /api/search
+Content-Type: application/json
+
+{"query": "Nike Air Force 1 Triple Black", "maxResults": 10}
+```
+Search by product name, description, or any natural language query. Works for exact product names ("New Balance 740 Rich Oak Bisque") or vague descriptions ("brown chunky sneakers with beige sole").
 ```bash
 POST /api/search
 Content-Type: application/json
@@ -48,7 +55,7 @@ Supports Locus USDC payments with on-chain receipts.
 
 ## How It Works
 
-1. **Send an image** — photo of any product (clothing, shoes, accessories, furniture, anything)
+1. **Send an image or describe a product** — photo, product name, or natural language description
 2. **AI identifies it** — Google Lens + AI Mode + LLM determines exact brand, model, and colorway
 3. **Find where to buy** — real store links with prices from across the web
 4. **Cheaper alternatives** — similar items from other brands, sorted by price

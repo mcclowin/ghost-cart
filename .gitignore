@@ -9,3 +9,4 @@ dist/
 .synthesis-credentials
 media/
 data/
+docs/pipeline-log.md
