@@ -46,32 +46,54 @@ function extractBestUrl(item) {
 }
 
 /**
- * Search Google Shopping via SerpAPI
+ * Search Google Shopping via Bright Data SERP API
  */
 export async function searchGoogleShopping(query, options = {}) {
-  const apiKey = process.env.SERPAPI_KEY;
+  const apiKey = process.env.BRIGHTDATA_API_KEY;
+  const zone = process.env.BRIGHTDATA_ZONE || 'serp_api1';
   if (!apiKey) {
-    console.warn('⚠️ SERPAPI_KEY not set — skipping Google Shopping');
+    console.warn('⚠️ BRIGHTDATA_API_KEY not set — skipping Google Shopping');
     return [];
   }
 
+  const country = process.env.LENS_COUNTRY || 'uk';
+  const brightdataCountry = country === 'uk' ? 'gb' : country;
+
   try {
-    const params = new URLSearchParams({
-      api_key: apiKey,
-      engine: 'google_shopping',
-      q: query,
-      gl: options.country || 'uk',
-      hl: options.language || 'en',
-      num: (options.limit || 10).toString(),
+    const shoppingUrl = new URL('https://www.google.com/search');
+    shoppingUrl.searchParams.set('q', query);
+    shoppingUrl.searchParams.set('tbm', 'shop');
+    shoppingUrl.searchParams.set('hl', options.language || 'en');
+    shoppingUrl.searchParams.set('gl', country);
+    shoppingUrl.searchParams.set('num', (options.limit || 20).toString());
+    shoppingUrl.searchParams.set('brd_json', '1');
+
+    const response = await fetch('https://api.brightdata.com/request', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        zone,
+        url: shoppingUrl.toString(),
+        format: 'raw',
+        country: brightdataCountry,
+      }),
     });
 
-    if (options.minPrice) params.append('min_price', options.minPrice);
-    if (options.maxPrice) params.append('max_price', options.maxPrice);
+    const text = await response.text();
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch {
+      console.error('Google Shopping: invalid JSON response');
+      return [];
+    }
 
-    const response = await fetch(`https://serpapi.com/search.json?${params}`);
-    const data = await response.json();
-
-    if (!data.shopping_results) {
+    // Bright Data returns shopping results in 'organic' or 'shopping' array
+    const shoppingResults = data.shopping || data.organic || [];
+    if (shoppingResults.length === 0) {
       console.log('No Google Shopping results found');
       return [];
     }
@@ -79,35 +101,36 @@ export async function searchGoogleShopping(query, options = {}) {
     let directCount = 0;
     let needsResolution = 0;
 
-    const results = data.shopping_results.map(item => {
-      const urlInfo = extractBestUrl(item);
-      if (urlInfo.isDirect) directCount++;
+    const results = shoppingResults.map((item, index) => {
+      const url = item.link || item.url || '';
+      const isDirect = isDirectStoreUrl(url);
+      if (isDirect) directCount++;
       else needsResolution++;
 
       return {
-        marketplace: item.source || 'Google Shopping',
-        title: item.title,
+        marketplace: item.source || item.seller || 'Google Shopping',
+        title: item.title || '',
         price: {
-          amount: parseFloat(item.extracted_price) || null,
+          amount: parseFloat(item.extracted_price || item.price?.replace(/[^0-9.]/g, '')) || null,
           currency: 'GBP',
           display: item.price || 'See store',
         },
-        image: item.thumbnail || null,
-        url: urlInfo.url,
-        isDirect: urlInfo.isDirect,
-        googleFallbackUrl: urlInfo.googleFallbackUrl,
+        image: item.thumbnail || item.image || null,
+        url: url,
+        isDirect,
+        googleFallbackUrl: isDirect ? null : url,
         rating: item.rating || null,
         reviews: item.reviews || null,
         seller: {
-          name: item.source || 'Unknown',
-          rating: item.seller_rating || null,
+          name: item.source || item.seller || 'Unknown',
+          rating: null,
         },
-        shipping: item.delivery || null,
-        condition: item.second_hand_condition || 'New',
-        badge: item.tag || null,
-        productId: item.product_id || null,
-        pageToken: item.serpapi_product_api_comparisons || item.page_token || null,
-        serpPosition: item.position,
+        shipping: item.delivery || item.shipping || null,
+        condition: 'New',
+        badge: null,
+        productId: null,
+        pageToken: null,
+        serpPosition: item.position || index + 1,
         source: 'google_shopping',
       };
     });
@@ -116,7 +139,7 @@ export async function searchGoogleShopping(query, options = {}) {
     return results;
 
   } catch (error) {
-    console.error('SerpAPI search error:', error.message);
+    console.error('Google Shopping search error:', error.message);
     return [];
   }
 }
