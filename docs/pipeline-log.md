@@ -279,13 +279,46 @@ Bright Data routes through random countries each request. Results vary dramatica
 
 ---
 
+## Checkpoint: 2026-04-17 — Colorway image extraction
+
+### Problem
+Product cards on the results page show the wrong colorway image. E.g. user searches a "Fog Green" jacket, but every card shows the default black variant because:
+1. `og:image` always returns the default/hero colorway (usually black)
+2. Lens visual match images are only used as fallback for *missing* images, never override OG images
+3. Stores like alpineshopvt get approved by LLM sanity check (correct brand+model in title) but don't actually stock the identified colorway — no way to verify without page content
+
+### Root cause
+The pipeline only extracted metadata (og:title, og:image, og:description) from product pages. It never looked at the full page content where colorway-specific images live.
+
+### Fix
+1. **Colorway extraction** — `parseAiModeAnswer` now returns a separate `colorway` field (e.g. "Fog Green") alongside `exactProduct`
+2. **Post-approval Firecrawl** — After LLM sanity check approves ~4-6 candidates, Firecrawl each to get full markdown content
+3. **Color image extraction** — `extractColorwayImage(markdown, colorway)` searches page content for the colorway text, then finds the nearest image URL (markdown `![alt](url)` or raw CDN URLs). Prefers images whose alt text or URL path contains the colorway name.
+4. **First Firecrawl pass** also now captures `pageContent` so we don't double-scrape candidates that failed OG fetch
+
+### Flow change
+```
+Before: OG fetch → Firecrawl (OG-failed, metadata only) → LLM check → visual match images (missing only)
+After:  OG fetch → Firecrawl (OG-failed, metadata + content) → LLM check → Firecrawl (approved, for colorway images) → visual match fallback
+```
+
+### Risk
+- Adds Firecrawl cost: up to 6 extra scrapes per search (only on approved candidates)
+- Some stores block Firecrawl (lululemon.co.uk returns 410) — falls through to visual match / OG image
+- Soft approach: if colorway not found on page, we keep the result with its existing image — no rejections
+
+### Status: Deployed, needs testing
+
+---
+
 ## TODO / Known Issues
 
-- [ ] Implement Lens-first exact match process
-- [ ] Capture and use Lens `offers` field
-- [ ] Add detailed logging for all Lens data (organic URLs, visual URLs, offers)
+- [x] Implement Lens-first exact match process
+- [x] Capture and use Lens `offers` field
+- [x] Add detailed logging for all Lens data (organic URLs, visual URLs, offers)
 - [ ] `rankResults` is heuristic, not LLM — misleading name
 - [ ] Used product filter only runs on exact branch, not alternatives
 - [ ] No deduplication of results across exact + alternatives branches
 - [ ] OG image is SVG — Instagram DM previews may not render it (needs PNG)
 - [ ] `getProductOffers` rarely returns data — consider removing to reduce complexity
+- [ ] Consider soft-penalizing candidates where colorway not found in page content (not hard reject)

@@ -119,6 +119,7 @@ export async function parseAiModeAnswer(aiResult, lensResults, fallbackQuery, ll
   let exactSearchQuery = null;
   let alternativeSearchQuery = fallbackQuery || 'clothing';
   let cheaperAltQuery = null;
+  let colorway = null;
 
   try {
     const model = process.env.LLM_PROVIDER === 'venice' ? 'venice-uncensored' : 'gpt-4o-mini';
@@ -132,11 +133,13 @@ export async function parseAiModeAnswer(aiResult, lensResults, fallbackQuery, ll
 Return JSON only:
 {
   "exactProduct": "Brand Model Colorway",
+  "colorway": "Colorway Name",
   "alternativeSearch": "Brand Model",
   "cheaperAlternativeSearch": "generic description without brand"
 }
 Rules:
 - exactProduct: include brand + model name + colorway. E.g. "Alo Yoga Sweet Escape Zip Up Hoodie Candy Heart Pink"
+- colorway: JUST the official colorway/color name as it appears on the product page. E.g. "Candy Heart Pink", "Fog Green", "Triple Black", "Rich Oak Bisque". Use the brand's official name, not generic colors.
 - alternativeSearch: just brand + general product type. E.g. "Alo Yoga zip up hoodie"
 - cheaperAlternativeSearch: describe the product WITHOUT the brand name, focusing on what it looks like so someone can find cheaper alternatives from other brands. E.g. "pink cropped zip hoodie women athletic" or "grey suede loafers with charm detail women" or "brown beige retro chunky sneakers"
 - If multiple items (e.g. a set), use the main/top item
@@ -151,7 +154,9 @@ Rules:
     exactSearchQuery = parsed.exactProduct || null;
     alternativeSearchQuery = parsed.alternativeSearch || alternativeSearchQuery;
     cheaperAltQuery = parsed.cheaperAlternativeSearch || null;
+    colorway = parsed.colorway || null;
     console.log(`   🧠 Extracted: "${exactSearchQuery}"`);
+    console.log(`   🧠 Colorway: "${colorway}"`);
     console.log(`   🧠 Alternative: "${alternativeSearchQuery}"`);
     console.log(`   🧠 Cheaper alt: "${cheaperAltQuery}"`);
   } catch (err) {
@@ -167,6 +172,7 @@ Rules:
     hasExactModel,
     exactModel: exactSearchQuery,
     exactSearchQuery,
+    colorway,
     confidence,
     alternativeSearchQuery,
     cheaperAlternativeSearch: cheaperAltQuery || alternativeSearchQuery,

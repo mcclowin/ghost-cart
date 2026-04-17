@@ -146,6 +146,67 @@ function getDomain(url) {
   try { return new URL(url).hostname.replace('www.', ''); } catch { return ''; }
 }
 
+// ── Colorway image extraction from page content ──
+
+/**
+ * Search Firecrawl markdown content for an image URL associated with a specific colorway.
+ * Product pages list colors near their images, e.g.:
+ *   ![Fog Green](https://images.lulu.../LM4AVAS_063366_1)
+ *   or "Fog Green" text near image links in the markdown
+ */
+function extractColorwayImage(markdown, colorway) {
+  if (!markdown || !colorway) return null;
+
+  const colorLower = colorway.toLowerCase();
+  const mdLower = markdown.toLowerCase();
+  const colorIdx = mdLower.indexOf(colorLower);
+  if (colorIdx === -1) return null;
+
+  // Get a window around the colorway mention (±2000 chars)
+  const windowStart = Math.max(0, colorIdx - 2000);
+  const windowEnd = Math.min(markdown.length, colorIdx + 2000);
+  const window = markdown.slice(windowStart, windowEnd);
+
+  // Extract all image URLs from the window:
+  // 1. Markdown images: ![alt](url)
+  // 2. Raw image URLs ending in common extensions or CDN patterns
+  const imageUrls = [];
+
+  // Markdown image pattern
+  const mdImageRegex = /!\[([^\]]*)\]\(([^)]+)\)/g;
+  let match;
+  while ((match = mdImageRegex.exec(window)) !== null) {
+    const alt = match[1];
+    const url = match[2];
+    if (url.length > 20 && !url.includes('icon') && !url.includes('logo') && !url.includes('svg')) {
+      imageUrls.push({ url, alt, distanceFromColor: Math.abs(match.index - (colorIdx - windowStart)) });
+    }
+  }
+
+  // Raw image URLs (CDN patterns common in product pages)
+  const rawUrlRegex = /(https?:\/\/[^\s"')]+\.(?:jpg|jpeg|png|webp)(?:\?[^\s"')]*)?)/gi;
+  while ((match = rawUrlRegex.exec(window)) !== null) {
+    const url = match[1];
+    if (url.length > 20 && !url.includes('icon') && !url.includes('logo') && !url.includes('svg') && !url.includes('1x1')) {
+      imageUrls.push({ url, alt: '', distanceFromColor: Math.abs(match.index - (colorIdx - windowStart)) });
+    }
+  }
+
+  if (imageUrls.length === 0) return null;
+
+  // Prefer images whose alt text or URL contains the colorway
+  const colorMatch = imageUrls.find(img =>
+    img.alt.toLowerCase().includes(colorLower) ||
+    img.url.toLowerCase().includes(colorLower.replace(/\s+/g, '-')) ||
+    img.url.toLowerCase().includes(colorLower.replace(/\s+/g, '_'))
+  );
+  if (colorMatch) return colorMatch.url;
+
+  // Otherwise return the image closest to the colorway text mention
+  imageUrls.sort((a, b) => a.distanceFromColor - b.distanceFromColor);
+  return imageUrls[0].url;
+}
+
 // ── Lens-first exact matches with LLM sanity check ──
 const SOCIAL_URL_PATTERN = /instagram|youtube|reddit|pinterest|facebook|tiktok|twitter|threads|linkedin/i;
 
@@ -249,8 +310,49 @@ async function buildExactMatchesFromLens(lensResults, discovery) {
   // ── Step 4: LLM sanity check ──
   const verified = await llmSanityCheck(deduped, productName);
 
-  // Images already enriched by OG fetch + Firecrawl before LLM check.
-  // Also try visual match images for any still missing.
+  // ── Step 5: Colorway image extraction ──
+  // Firecrawl approved candidates to get page content, then extract
+  // color-specific images instead of the default og:image.
+  const colorway = discovery.colorway || '';
+  if (colorway && verified.length > 0 && process.env.FIRECRAWL_API_KEY) {
+    console.log(`   🎨 Colorway image extraction: looking for "${colorway}" images on ${verified.length} approved pages...`);
+    const { firecrawlScrape } = await import('../services/firecrawl.js');
+    let upgraded = 0;
+
+    await Promise.all(verified.slice(0, 6).map(async (item) => {
+      // Skip if we already have page content from the earlier Firecrawl pass
+      if (item.pageContent) {
+        const colorImg = extractColorwayImage(item.pageContent, colorway);
+        if (colorImg) {
+          console.log(`      🎨 [${item.marketplace}] Found color image from cached content`);
+          item.image = colorImg;
+          upgraded++;
+        }
+        return;
+      }
+
+      try {
+        const result = await firecrawlScrape(item.url);
+        const markdown = result.body?.data?.markdown || '';
+        if (!markdown) return;
+
+        const colorImg = extractColorwayImage(markdown, colorway);
+        if (colorImg) {
+          console.log(`      🎨 [${item.marketplace}] Upgraded image → ${colorway} variant`);
+          item.image = colorImg;
+          upgraded++;
+        } else {
+          console.log(`      ⬜ [${item.marketplace}] "${colorway}" not found in page content (${markdown.length}ch)`);
+        }
+      } catch (err) {
+        console.log(`      ⚠️ [${item.marketplace}] Firecrawl failed: ${err.message}`);
+      }
+    }));
+
+    console.log(`   🎨 Colorway images: ${upgraded}/${verified.length} upgraded to "${colorway}" variant`);
+  }
+
+  // Visual match images as final fallback for anything still missing
   const visualImages = (lensResults.visualMatches || [])
     .filter(v => v.image && v.url)
     .map(v => ({ url: v.url, image: v.image, domain: getDomain(v.url) }));
@@ -381,6 +483,7 @@ async function llmSanityCheck(candidates, productName) {
       try {
         const result = await firecrawlScrape(c.url);
         const metadata = result.body?.data?.metadata || {};
+        const markdown = result.body?.data?.markdown || '';
         const pageTitle = metadata.title || metadata.ogTitle || '';
         const ogImage = metadata.ogImage || metadata['og:image'] || '';
         const ogDesc = metadata.description || metadata.ogDescription || '';
@@ -388,8 +491,9 @@ async function llmSanityCheck(candidates, productName) {
         if (pageTitle) c.ogTitle = pageTitle.slice(0, 200);
         if (ogDesc) c.ogDesc = ogDesc.slice(0, 200);
         if (ogImage && !c.image) { c.image = ogImage; imagesFound++; }
+        if (markdown) c.pageContent = markdown;
 
-        console.log(`      🔥 ${i}. [${c.marketplace}] title="${(pageTitle || '').slice(0, 60)}" og:image=${ogImage ? 'yes' : 'no'}`);
+        console.log(`      🔥 ${i}. [${c.marketplace}] title="${(pageTitle || '').slice(0, 60)}" og:image=${ogImage ? 'yes' : 'no'} content=${markdown.length}ch`);
       } catch (err) {
         console.log(`      ⚠️ ${i}. [${c.marketplace}] Firecrawl also failed: ${err.message}`);
       }
@@ -643,6 +747,7 @@ router.post('/search-image', upload.single('image'), async (req, res) => {
     console.log(`   ┌─ IDENTIFICATION ────────────────────────────────────`);
     console.log(`   │ Lens related_search: ${(lensResults.relatedSearches || []).join(', ') || 'none'}`);
     console.log(`   │ AI Mode (PRIMARY):   "${discovery.exactSearchQuery || 'none'}" [${discovery.confidence}]`);
+    console.log(`   │ Colorway:            "${discovery.colorway || 'none'}"`);
     console.log(`   │ Venice LLM (compare): "${llmDiscovery.exactSearchQuery || 'none'}" [${llmDiscovery.confidence || '?'}]`);
     console.log(`   │ AI Mode rationale: ${(discovery.rationale || '').slice(0, 150)}`);
     console.log(`   │ Cheaper alt query:   "${discovery.cheaperAlternativeSearch || 'none'}"`);
