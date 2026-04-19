@@ -823,7 +823,7 @@ router.post('/search-image', upload.single('image'), async (req, res) => {
       createdAt: new Date().toISOString(),
     };
 
-    saveResult(searchId, resultData);
+    await saveResult(searchId, resultData);
 
     const pageUrl = `${publicBaseUrl.replace(/\/$/, '')}/find/${searchId}`;
     const dmText = formatDmReply(vision, exactBranch?.ranked, alternativesBranch.ranked, discovery, pageUrl);
@@ -835,10 +835,11 @@ router.post('/search-image', upload.single('image'), async (req, res) => {
     logSearch({
       source: username ? 'instagram' : 'web',
       username: username || null,
-      query: searchQuery,
+      query: discovery.exactSearchQuery || searchQuery,
       imageFilename: req.file?.filename || null,
       durationMs: duration,
       resultCount,
+      discovery,
     }).then(dbId => {
       if (!dbId) return;
       if (primaryItem) {

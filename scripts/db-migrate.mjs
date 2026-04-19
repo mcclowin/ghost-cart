@@ -31,8 +31,20 @@ await client.query(`
     query         TEXT,
     image_filename VARCHAR(255),
     duration_ms   INTEGER,
-    result_count  INTEGER DEFAULT 0
+    result_count  INTEGER DEFAULT 0,
+    exact_model   TEXT,
+    exact_search_query TEXT,
+    colorway      TEXT,
+    discovery_confidence VARCHAR(20),
+    discovery_source VARCHAR(50)
   );
+
+  ALTER TABLE searches
+    ADD COLUMN IF NOT EXISTS exact_model TEXT,
+    ADD COLUMN IF NOT EXISTS exact_search_query TEXT,
+    ADD COLUMN IF NOT EXISTS colorway TEXT,
+    ADD COLUMN IF NOT EXISTS discovery_confidence VARCHAR(20),
+    ADD COLUMN IF NOT EXISTS discovery_source VARCHAR(50);
 
   CREATE TABLE IF NOT EXISTS brands_detected (
     id          SERIAL PRIMARY KEY,
@@ -56,16 +68,26 @@ await client.query(`
     relevance_score REAL
   );
 
+  CREATE TABLE IF NOT EXISTS result_pages (
+    search_id  TEXT PRIMARY KEY,
+    payload    JSONB NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    expires_at TIMESTAMPTZ
+  );
+
   CREATE INDEX IF NOT EXISTS idx_searches_created_at ON searches(created_at);
   CREATE INDEX IF NOT EXISTS idx_searches_source ON searches(source);
+  CREATE INDEX IF NOT EXISTS idx_searches_exact_search_query ON searches(exact_search_query);
   CREATE INDEX IF NOT EXISTS idx_brands_brand ON brands_detected(brand);
   CREATE INDEX IF NOT EXISTS idx_brands_item_type ON brands_detected(item_type);
   CREATE INDEX IF NOT EXISTS idx_results_marketplace ON results_served(marketplace);
+  CREATE INDEX IF NOT EXISTS idx_result_pages_created_at ON result_pages(created_at);
 `);
 
 console.log('✅ Tables created:');
 console.log('   - searches');
 console.log('   - brands_detected');
 console.log('   - results_served');
+console.log('   - result_pages');
 
 await client.end();

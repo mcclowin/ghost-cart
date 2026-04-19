@@ -7,19 +7,24 @@ import { loadResult } from '../services/results-store.js';
 
 const router = Router();
 
-router.get('/find/:id', (req, res) => {
+router.get('/find/:id', async (req, res) => {
   const { id } = req.params;
-  const data = loadResult(id);
-  if (!data) {
-    return res.status(404).send(notFoundPage());
-  }
-  const accept = req.headers.accept || '';
+  try {
+    const data = await loadResult(id);
+    if (!data) {
+      return res.status(404).send(notFoundPage());
+    }
+    const accept = req.headers.accept || '';
 
-  if (accept.includes('application/json')) {
-    return res.json(data);
-  }
+    if (accept.includes('application/json')) {
+      return res.json(data);
+    }
 
-  res.send(renderResultsPage(data));
+    res.send(renderResultsPage(data));
+  } catch (err) {
+    console.error(`Result page load failed for ${id}:`, err.message);
+    res.status(500).send(notFoundPage());
+  }
 });
 
 function notFoundPage() {

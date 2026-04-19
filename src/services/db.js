@@ -44,18 +44,85 @@ export function hasDb() {
 /**
  * Log a search request. Returns the inserted row id.
  */
-export async function logSearch({ source, username, query: q, imageFilename, durationMs, resultCount }) {
+export async function logSearch({
+  source,
+  username,
+  query: q,
+  imageFilename,
+  durationMs,
+  resultCount,
+  discovery = null,
+}) {
   if (!pool) return null;
   try {
     const { rows } = await pool.query(
-      `INSERT INTO searches (source, username, query, image_filename, duration_ms, result_count)
-       VALUES ($1, $2, $3, $4, $5, $6)
+      `INSERT INTO searches (
+         source,
+         username,
+         query,
+         image_filename,
+         duration_ms,
+         result_count,
+         exact_model,
+         exact_search_query,
+         colorway,
+         discovery_confidence,
+         discovery_source
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
        RETURNING id`,
-      [source || 'web', username || null, q || null, imageFilename || null, durationMs || null, resultCount || 0],
+      [
+        source || 'web',
+        username || null,
+        q || null,
+        imageFilename || null,
+        durationMs || null,
+        resultCount || 0,
+        discovery?.exactModel || null,
+        discovery?.exactSearchQuery || null,
+        discovery?.colorway || null,
+        discovery?.confidence || null,
+        discovery ? 'ai_mode' : null,
+      ],
     );
     return rows[0].id;
   } catch (err) {
     console.error('DB logSearch error:', err.message);
+    return null;
+  }
+}
+
+export async function saveResultPage(searchId, payload, expiresAt = null) {
+  if (!pool) return false;
+  try {
+    await pool.query(
+      `INSERT INTO result_pages (search_id, payload, expires_at)
+       VALUES ($1, $2::jsonb, $3)
+       ON CONFLICT (search_id)
+       DO UPDATE SET payload = EXCLUDED.payload, expires_at = EXCLUDED.expires_at`,
+      [searchId, JSON.stringify(payload), expiresAt],
+    );
+    return true;
+  } catch (err) {
+    console.error('DB saveResultPage error:', err.message);
+    return false;
+  }
+}
+
+export async function loadResultPage(searchId) {
+  if (!pool) return null;
+  try {
+    const { rows } = await pool.query(
+      `SELECT payload
+       FROM result_pages
+       WHERE search_id = $1
+         AND (expires_at IS NULL OR expires_at > NOW())
+       LIMIT 1`,
+      [searchId],
+    );
+    return rows[0]?.payload || null;
+  } catch (err) {
+    console.error('DB loadResultPage error:', err.message);
     return null;
   }
 }
